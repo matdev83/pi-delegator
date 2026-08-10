@@ -1,8 +1,12 @@
+# Dependencies
 node_modules/
-.pi/
-.harness/
-.harness-archive/
-.harness-project/
-internal/
-*.tgz
+
+# Logs / temp
+*.log
+npm-debug.log*
+
+# OS / editor noise
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/

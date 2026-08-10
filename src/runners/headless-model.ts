@@ -1,8 +1,8 @@
 import { once } from "node:events";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildAgentSystemPrompt, type AgentDefinition } from "../agents.ts";
 import {
@@ -560,11 +560,34 @@ function buildPrompt(options: RunHeadlessModelOptions): string {
 		.join("\n\n");
 }
 
+// Resolve how to launch the child pi process. On Windows, pi is installed as a
+// .cmd shim / bash script which cannot be spawned with shell:false (ENOENT, see
+// earendil-works/pi#2464); spawning the node runtime with the actual cli script
+// (the one running us) avoids that on every platform.
+function resolvePiInvocation(): { command: string; args: string[] } {
+	const currentScript = process.argv[1];
+	if (currentScript && existsSync(currentScript)) {
+		return { command: process.execPath, args: [currentScript] };
+	}
+	const execName = basename(process.execPath).toLowerCase();
+	if (!/^(node|bun)(\.exe)?$/.test(execName)) {
+		// Standalone pi executable: spawn it directly.
+		return { command: process.execPath, args: [] };
+	}
+	return { command: "pi", args: [] };
+}
+
 export function buildPiArgv(
 	options: RunHeadlessModelOptions,
 ): readonly [string, ...string[]] {
+	const explicit = options.piCommand;
+	const invocation =
+		explicit === undefined
+			? resolvePiInvocation()
+			: { command: explicit, args: [] as string[] };
 	const argv: string[] = [
-		options.piCommand ?? "pi",
+		invocation.command,
+		...invocation.args,
 		"--mode",
 		"json",
 		"--print",
