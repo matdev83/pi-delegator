@@ -3,15 +3,36 @@
 **Cross-platform subagent delegation runtime for Pi.**
 
 [![CI](https://github.com/matdev83/pi-delegator/actions/workflows/ci.yml/badge.svg)](https://github.com/matdev83/pi-delegator/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/pi-delegator.svg)](https://www.npmjs.com/package/pi-delegator)
 
 `pi-delegator` adds one focused tool, `subagent`, plus lifecycle commands and live TUI observability. It supports isolated worker runs, parallel fan-out, sandbox/worktree controls, durable artifacts, async execution, native Windows workers, and visible Herdr or tmux backends.
 
 This is an independently maintained derivative of [AgwaB/pi-subagent](https://github.com/AgwaB/pi-subagent), based on upstream `v0.4.8`. It is not affiliated with or endorsed by the original project. See [NOTICE.md](./NOTICE.md) for provenance and attribution.
 
-npm package: [`pi-delegator`](https://www.npmjs.com/package/pi-delegator)
+Package repository: [`matdev83/pi-delegator`](https://github.com/matdev83/pi-delegator)
 
 ## Installation
+
+### Install from GitHub
+
+The package is currently distributed from GitHub, so no npm account is needed:
+
+```bash
+pi install git:github.com/matdev83/pi-delegator
+```
+
+Pi clones the public repository, installs its package dependencies, and loads
+the declared extension after reload. This uses Pi's supported Git package
+source format. Track the current default branch explicitly with:
+
+```bash
+pi install git:github.com/matdev83/pi-delegator@main
+```
+
+For reproducible deployments, replace `main` with a release tag or commit
+after one has been published.
+
+When the npm package becomes available, the equivalent npm installation will
+be:
 
 ```bash
 pi install npm:pi-delegator
@@ -25,6 +46,35 @@ Platform support:
 
 - **Linux / macOS** — fully supported. Visible workers use `tmux` (must be installed and on `PATH`).
 - **Windows (native)** — `inline` and `headless` backends work out of the box. Visible workers use **`herdr`** ([herdr.dev](https://herdr.dev), a terminal workspace manager for coding agents) instead of tmux; request them with `backend: "herdr"` (or `visible: true` together with `backend: "herdr"`). The `tmux` backend is not available on native Windows; WSL2 is an option if you prefer tmux.
+
+### Windows prerequisite: install Herdr manually
+
+Herdr is a separate runtime dependency for visible native-Windows workers. Its
+Windows build is currently preview beta, and `pi-delegator` does not install
+it automatically. The simplest installation command recommended by the
+[Herdr project](https://github.com/herdrdev/herdr) is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
+```
+
+Restart the terminal after installation if `herdr` is not found on `PATH`.
+Verify the binary and server before starting a visible worker:
+
+```powershell
+herdr --version
+herdr status
+```
+
+If no server is running, start or attach to one in a separate terminal with
+`herdr`, then retry the subagent run. The extension performs the same
+`herdr status` preflight, with a five-second timeout, before launching a
+Herdr worker. If the binary is missing or the server is unreachable, the run
+fails with guidance to install/start Herdr or choose `backend: "headless"`.
+
+See Herdr’s [installation](https://herdr.dev/docs/install/) and
+[Windows beta](https://herdr.dev/docs/windows-beta/) documentation for
+platform limitations and updates.
 
 Do not install `pi-delegator` alongside another extension that registers the `subagent` tool or `/subagent` commands. Remove or disable the other extension first, then reload Pi.
 
@@ -75,7 +125,7 @@ Workers run in one of four backends:
 }
 ```
 
-The result envelope reports `herdr: { workspaceId, tabId, paneId }` for herdr runs. Requires the `herdr` CLI and a running herdr server (automatic once Herdr is installed).
+The result envelope reports `herdr: { workspaceId, tabId, paneId }` for herdr runs. Requires the `herdr` CLI and a running Herdr server.
 
 ### Sandbox
 
@@ -168,6 +218,20 @@ Open the run monitor:
 ```
 
 ![/subagent panel](./assets/subagent-panel.png)
+
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `/subagent enable` | Expose the `subagent` tool to the LLM for the current session. |
+| `/subagent disable` | Hide the `subagent` tool from the LLM for the current session. |
+| `/subagent panel` | Open the full-screen, filterable run monitor. |
+| `/subagent watch [1-9]` | Open the selected recent run in a live modal. |
+| `/subagent kill [runId]` | Kill the only active run or a specified run. |
+| `/subagent kill all` | Kill all active runs in the current Pi session. |
+
+The watch modal also has keyboard shortcuts for the first nine recent runs:
+`Alt+Shift+1` … `Ctrl+9`, with `Ctrl+Alt+1` … `Ctrl+Alt+9` as a fallback.
 
 ### Live progress
 

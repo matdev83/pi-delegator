@@ -5,12 +5,60 @@ Detailed usage reference for the public Pi tool **`subagent`**.
 ## Install
 
 ```bash
+pi install git:github.com/matdev83/pi-delegator
+```
+
+The public GitHub installation does not require an npm account. Pi clones the
+repository, installs package dependencies, and loads the declared extension
+after reload. Track the current default branch explicitly with:
+
+```bash
+pi install git:github.com/matdev83/pi-delegator@main
+```
+
+For reproducible deployments, replace `main` with a release tag or commit
+after one has been published.
+
+When `pi-delegator` is published to npm, the equivalent installation will be:
+
+```bash
 pi install npm:pi-delegator
 ```
 
 Reload Pi after installation.
 
 Requires Node.js `>=22.19.0`.
+
+### Windows visible-worker prerequisite
+
+Native Windows `inline` and `headless` runs do not require Herdr. Visible
+native-Windows runs using `backend: "herdr"` do. Herdr is a separate
+dependency, its Windows build is preview beta, and `pi-delegator` does not
+install it automatically.
+
+Install it manually with the command recommended in the
+[Herdr repository](https://github.com/herdrdev/herdr):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
+```
+
+After installation, restart the terminal if needed and verify:
+
+```powershell
+herdr --version
+herdr status
+```
+
+If the server is not running, start or attach to it in a separate terminal by
+running `herdr`. Before each Herdr run, the extension executes `herdr status`
+with a five-second timeout. A missing binary or unreachable server produces a
+clear failure and suggests installing/starting Herdr or using
+`backend: "headless"` instead.
+
+See Herdr’s [installation](https://herdr.dev/docs/install/) and
+[Windows beta](https://herdr.dev/docs/windows-beta/) documentation for its
+current limitations.
 
 When migrating from `@agwab/pi-subagent`, remove or disable it before loading
 `pi-delegator`; both packages expose the same tool and slash-command names.
