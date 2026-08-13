@@ -38,7 +38,7 @@ writeFileSync(
 );
 writeFileSync(
 	join(attemptDir, "output.log"),
-	"line one\nline two\nAll tests passed.\n",
+	`line one\nline two\n${"long output marker ".repeat(8)}\nAll tests passed.\n`,
 );
 
 // listSessionRuns scoped to the session.
@@ -77,7 +77,19 @@ check(
 	lines[1],
 );
 check("output tail shown", joined.includes("All tests passed."));
+check(
+	"long output is preserved for modal wrapping",
+	all[0]?.outputTail.some((line) => line.length > 90) === true,
+);
 check("footer shows close hint", joined.includes("q/esc"));
+
+const renderRequests = [];
+tui.requestRender = (force) => renderRequests.push(force);
+writeFileSync(join(attemptDir, "output.log"), "fresh progress marker\n");
+await modal.refresh();
+const refreshed = modal.render(80).join("\n");
+check("refresh loads newly appended output", refreshed.includes("fresh progress marker"));
+check("refresh requests a forced render", renderRequests.at(-1) === true);
 
 modal.handleInput("q");
 check("q closes modal", closed === true);

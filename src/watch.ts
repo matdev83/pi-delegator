@@ -39,7 +39,7 @@ interface WatchTheme {
 type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
 
 interface WatchTui {
-	requestRender?: () => void;
+	requestRender?: (force?: boolean) => void;
 }
 
 /** Minimal view of a run + live progress for the modal. */
@@ -308,7 +308,9 @@ async function loadRunProgress(
 		lastActivityAt,
 		lastLine: clip(sanitize(lastLine), 90),
 		task: clip(sanitize(task), 90),
-		outputTail: outputTail.map((line) => clip(sanitize(line), 90)),
+		// Keep the bounded tail intact. The modal wraps lines to its actual
+		// viewport width; clipping here permanently loses useful output.
+		outputTail: outputTail.map((line) => sanitize(line)),
 		transcript,
 		completedAt:
 			typeof record.completedAt === "string"
@@ -629,7 +631,10 @@ export class SubagentWatch implements Component {
 			this.done();
 			return;
 		}
-		this.tui.requestRender?.();
+		// The overlay renderer may coalesce ordinary requests while another Pi
+		// render is pending. Force this live modal to redraw after each poll so
+		// elapsed time and newly appended output are visible during long runs.
+		this.tui.requestRender?.(true);
 	}
 
 	private async reload(): Promise<WatchRun | null> {
