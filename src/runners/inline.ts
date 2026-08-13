@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildAgentSystemPrompt, type AgentDefinition } from "../agents.ts";
 import {
 	createAttemptArtifactStore,
+	type AttemptArtifactStore,
 	type ArtifactRef,
 	type ResultEnvelope,
 } from "../artifacts/index.ts";
@@ -303,6 +305,58 @@ function maybeTextDelta(event: unknown): string {
 		: "";
 }
 
+interface LiveOutputWriter {
+	append(text: string): void;
+	close(): Promise<void>;
+}
+
+/**
+ * Keep inline runs observable while the SDK session is still executing.
+ * Deltas are batched so the SDK event callback never waits on filesystem I/O.
+ */
+function createLiveOutputWriter(store: AttemptArtifactStore): LiveOutputWriter {
+	let pending = "";
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let writeChain = Promise.resolve();
+
+	function flush(): Promise<void> {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+		const chunk = pending;
+		pending = "";
+		if (chunk.length === 0) return writeChain;
+		writeChain = writeChain
+			.then(async () => {
+				await store.appendTextArtifact("output", chunk);
+			})
+			.catch(() => undefined);
+		return writeChain;
+	}
+
+	function schedule(): void {
+		if (timer !== undefined) return;
+		timer = setTimeout(() => {
+			timer = undefined;
+			void flush();
+		}, 100);
+	}
+
+	return {
+		append(text) {
+			if (text.length === 0) return;
+			pending += text;
+			if (pending.length >= 4_096) void flush();
+			else schedule();
+		},
+		async close() {
+			await flush();
+			await writeChain;
+		},
+	};
+}
+
 function splitThinkingSuffix(modelReference: string): {
 	model: string;
 	thinking?: ThinkingLevel;
@@ -455,6 +509,25 @@ export async function runInlineModel(
 		attemptId: options.attemptId,
 		runsDir: options.runsDir,
 	});
+	const workerPayload = `${JSON.stringify(
+		{
+			input: { agent: options.agent, task: options.task },
+			cwd,
+			backend: "inline",
+			runId: store.runId,
+			attemptId: store.attemptId,
+			startedAt: startedAt.toISOString(),
+		},
+		null,
+	2,
+	)}\n`;
+	await writeFile(store.pathFor("worker"), workerPayload);
+	await writeFile(store.pathFor("output"), "");
+	const workerRef = store.refFor(
+		"worker",
+		Buffer.byteLength(workerPayload, "utf8"),
+	);
+	const liveOutput = createLiveOutputWriter(store);
 
 	let stdoutText = "";
 	let stderrText = "";
@@ -519,7 +592,9 @@ export async function runInlineModel(
 
 		const unsubscribe = session.subscribe?.((event) => {
 			toolCallTelemetry?.processEvent(event);
-			stdoutText += maybeTextDelta(event);
+			const delta = maybeTextDelta(event);
+			stdoutText += delta;
+			liveOutput.append(delta);
 			const agentEndText = maybeAssistantTextFromAgentEnd(event);
 			if (agentEndText.length > 0) outputText = agentEndText;
 		});
@@ -541,11 +616,12 @@ export async function runInlineModel(
 		}
 
 		if (source !== undefined)
-			stderrText += `${JSON.stringify({ sdkSource: source })}\n`;
+		stderrText += `${JSON.stringify({ sdkSource: source })}\n`;
 	} catch (error) {
 		failureKind = failureKind ?? "model";
 		stderrText += `${error instanceof Error ? error.message : String(error)}\n`;
 	}
+	await liveOutput.close();
 
 	if (failureKind === null && outputText.length === 0) {
 		failureKind = "model";
@@ -562,6 +638,7 @@ export async function runInlineModel(
 				? "cancelled"
 				: "failed";
 	const artifacts: ArtifactRef[] = [
+		workerRef,
 		await store.writeTextArtifact("stderr", stderrText),
 		await store.writeTextArtifact("output", outputText),
 		...toolCallArtifactRefs,
