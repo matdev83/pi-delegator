@@ -43,7 +43,7 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "image": "https://raw.githubusercontent.com/matdev83/pi-delegator/main/assets/subagent-panel.png"
+    "image": "https://raw.githubusercontent.com/matdev83/pi-delegator/main/assets/subagent-demo.png"
   },
   "scripts": {
     "check:scripts": "node ./scripts/check-scripts.mjs",

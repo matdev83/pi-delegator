@@ -223,8 +223,6 @@ Open the run monitor:
 /subagent panel
 ```
 
-![/subagent panel](./assets/subagent-panel.png)
-
 ### Commands
 
 | Command | Purpose |
