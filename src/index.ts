@@ -18,6 +18,7 @@ import {
 import {
 	appendRunEvent,
 	createAttemptArtifactStore,
+	readRunRecord,
 	setRunDependency,
 	type ArtifactRef,
 	type ResultEnvelope,
@@ -37,6 +38,7 @@ import {
 	type ResolvedBackend,
 } from "./core/constants.ts";
 import { resolveBackend } from "./core/resolver.ts";
+import { isSafeId } from "./core/identifiers.ts";
 import { clip, visibleLength } from "./core/text-width.ts";
 import { validateResolveInput } from "./core/validation.ts";
 import {
@@ -56,12 +58,13 @@ import { showSubagentPanel } from "./panel.ts";
 import {
 	attachProgress,
 	bindProgress,
-	detachProgress,
 	formatProgress,
 	getProgress,
 	resetProgress,
+	settleProgress,
 	type LiveProgress,
 } from "./live-progress.ts";
+import { resetLiveTranscripts } from "./live-transcript.ts";
 import {
 	currentSessionIdFromCtx,
 	listSessionRuns,
@@ -77,6 +80,8 @@ import {
 } from "./output-preview.ts";
 
 const TOOL_NAME = "subagent";
+let nextWidgetOrdinal = 1;
+const widgetOrdinals = new Map<string, number>();
 const SUPPORTED_KEYS = new Set([
 	"backend",
 	"visible",
@@ -211,7 +216,7 @@ class HiddenComponent {
  */
 class ProgressLineComponent {
 	constructor(
-		private readonly base: string,
+		private readonly makeBase: (progress: LiveProgress | undefined) => string,
 		private readonly toolCallId: string,
 	) {}
 
@@ -221,15 +226,44 @@ class ProgressLineComponent {
 
 	render(width: number): string[] {
 		const progress = getProgress(this.toolCallId);
-		if (progress === undefined) return [clip(this.base, width)];
+		const base = this.makeBase(progress);
+		if (progress === undefined) return [clip(base, width)];
 		const suffix = formatProgress(progress);
 		const separator = " · ";
 		const baseWidth = Math.max(
 			4,
 			width - visibleLength(suffix) - visibleLength(separator),
 		);
-		return [clip(`${clip(this.base, baseWidth)}${separator}${suffix}`, width)];
+		return [clip(`${clip(base, baseWidth)}${separator}${suffix}`, width)];
 	}
+}
+
+function subagentNumberSuffix(progress: LiveProgress | undefined): string {
+	const ordinals = progress?.sessionOrdinals ??
+		(progress?.sessionOrdinal === undefined ? [] : [progress.sessionOrdinal]);
+	if (ordinals.length === 0) return "";
+	if (ordinals.length === 1) return ` #${ordinals[0]}`;
+	const sorted = [...ordinals].sort((a, b) => a - b);
+	const consecutive = sorted.every(
+		(value, index) => index === 0 || value === sorted[index - 1]! + 1,
+	);
+	return consecutive
+		? ` #${sorted[0]}–#${sorted.at(-1)}`
+		: ` ${sorted.map((value) => `#${value}`).join(",")}`;
+}
+
+function resetWidgetOrdinals(): void {
+	nextWidgetOrdinal = 1;
+	widgetOrdinals.clear();
+}
+
+function widgetOrdinalFor(toolCallId: string | undefined): number | undefined {
+	if (toolCallId === undefined || toolCallId.length === 0) return undefined;
+	const existing = widgetOrdinals.get(toolCallId);
+	if (existing !== undefined) return existing;
+	const ordinal = nextWidgetOrdinal++;
+	widgetOrdinals.set(toolCallId, ordinal);
+	return ordinal;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -623,13 +657,22 @@ async function lifecycleAction(
 		throw new InputValidationError(
 			`${String(action)} action requires a non-empty runId.`,
 		);
+	if (!isSafeId(runId))
+		throw new InputValidationError(
+			"runId must contain only letters, numbers, dots, underscores, or dashes.",
+		);
+	const attemptId =
+		optionalString(raw.attemptId, "attemptId") ??
+		optionalString(raw.taskId, "taskId");
+	if (attemptId !== undefined && !isSafeId(attemptId))
+		throw new InputValidationError(
+			"attemptId must contain only letters, numbers, dots, underscores, or dashes.",
+		);
 	const ref = await resolveRunRef(
 		{
 			cwd: optionalString(raw.cwd, "cwd"),
 			runId,
-			attemptId:
-				optionalString(raw.attemptId, "attemptId") ??
-				optionalString(raw.taskId, "taskId"),
+			attemptId,
 			runsDir: optionalString(raw.runsDir, "runsDir"),
 		},
 		cwd,
@@ -637,33 +680,50 @@ async function lifecycleAction(
 
 	if (action === "status") {
 		const snapshot = await addOutputPreview(await getRunStatus(ref));
+		const notFound = snapshot === null;
 		return textResult(
 			{
 				tool: TOOL_NAME,
 				action,
-				status: snapshot === null ? "failed" : snapshot.status,
+				status: notFound ? "not-found" : snapshot.status,
+				...(notFound ? { error: `No run found with id: ${runId}` } : {}),
 				snapshot,
 			},
-			snapshot === null,
+			notFound,
 			{ snapshot },
 		);
 	}
 
 	if (action === "logs") {
 		const snapshot = await getRunLogs(ref);
+		const notFound = snapshot === null;
 		return textResult(
 			{
 				tool: TOOL_NAME,
 				action,
-				status: snapshot === null ? "failed" : snapshot.status,
+				status: notFound ? "not-found" : snapshot.status,
+				...(notFound ? { error: `No run found with id: ${runId}` } : {}),
 				snapshot,
 			},
-			snapshot === null,
+			notFound,
 			{ snapshot },
 		);
 	}
 
 	if (action === "mark-background") {
+		const existing = await readRunRecord(ref);
+		if (existing === null)
+			return textResult(
+				{
+					tool: TOOL_NAME,
+					action,
+					status: "not-found",
+					error: `No run found with id: ${runId}`,
+					snapshot: null,
+				},
+				true,
+				{ snapshot: null },
+			);
 		const record = await setRunDependency(ref, "background");
 		await appendRunEvent(ref, {
 			type: "run.mark_background",
@@ -1038,9 +1098,16 @@ async function handleKillCommand(
 	args: string,
 	ctx: ExtensionCommandContext,
 ): Promise<boolean> {
-	const match = /^kill(?:\s+(all|[A-Za-z0-9._-]+))?$/.exec(args);
+	const match = /^kill(?:\s+(\S+))?$/.exec(args);
 	if (match === null) return false;
 	const target = match[1];
+	if (target !== undefined && target !== "all" && !isSafeId(target)) {
+		ctx.ui.notify?.(
+			"Invalid subagent run ID. Use only letters, numbers, dots, underscores, or dashes.",
+			"warning",
+		);
+		return true;
+	}
 	const active = await activeSessionRuns(ctx);
 	if (target === undefined && active.length === 0) {
 		ctx.ui.notify?.("No active subagent runs to kill.", "info");
@@ -1112,12 +1179,15 @@ export default function registerSubagentEngine(pi: ExtensionAPI) {
 			if (event.toolName !== TOOL_NAME) return;
 			// The host's terminal event is authoritative even if registry finalization
 			// is delayed or fails. The settled result row no longer needs polling.
-			detachProgress(event.toolCallId);
+			settleProgress(event.toolCallId, event.isError ? "failed" : "completed");
 		});
 		pi.on("session_shutdown", () => {
 			resetProgress();
+			resetLiveTranscripts();
+			resetWidgetOrdinals();
 		});
 		pi.on("session_start", async (_event, ctx) => {
+			resetWidgetOrdinals();
 			setSubagentToolEnabled(pi, isSubagentToolEnabled(pi, ctx), ctx);
 			await refreshSubagentCatalog(pi, ctx.cwd);
 		});
@@ -1129,7 +1199,7 @@ export default function registerSubagentEngine(pi: ExtensionAPI) {
 	if (typeof pi.registerCommand === "function") {
 		pi.registerCommand("subagent", {
 			description:
-				"Subagent utilities. Use `/subagent enable|disable` to control LLM exposure, `/subagent panel` for status, `/subagent watch [1-9]` for a live run, or `/subagent kill [runId|all]` to cancel runs.",
+				"Subagent utilities. Use `/subagent enable|disable` to control LLM exposure, `/subagent panel` for status, `/subagent watch [number|runId]` for a live run, or `/subagent kill [runId|all]` to cancel runs.",
 			getArgumentCompletions(prefix) {
 				if (/^kill\s+/i.test(prefix)) {
 					const value = prefix.trim().slice("kill".length).trim();
@@ -1162,8 +1232,8 @@ export default function registerSubagentEngine(pi: ExtensionAPI) {
 					},
 					{
 						value: "watch",
-						label: "watch [number]",
-						description: "Open one subagent run in a modal",
+						label: "watch [number|runId]",
+						description: "Open one current-session subagent run in a modal",
 					},
 					{
 						value: "kill",
@@ -1196,14 +1266,14 @@ export default function registerSubagentEngine(pi: ExtensionAPI) {
 					await showSubagentPanel(ctx);
 					return;
 				}
-				const watchMatch = /^watch(?:\s+([1-9]))?$/.exec(normalizedArgs);
+				const watchMatch = /^watch(?:\s+(\S+))?$/.exec(normalizedArgs);
 				if (watchMatch !== null) {
-					await openSubagentWatch(ctx, Number(watchMatch[1] ?? "1") - 1);
+					await openSubagentWatch(ctx, watchMatch[1] ?? "1");
 					return;
 				}
 				if (await handleKillCommand(normalizedArgs, ctx)) return;
 				ctx.ui.notify?.(
-					"Usage: /subagent enable|disable|panel|watch [1-9]|kill [runId|all]",
+					"Usage: /subagent enable|disable|panel|watch [number|runId]|kill [runId|all]",
 					"warning",
 				);
 			},
@@ -1518,12 +1588,28 @@ function buildSubagentToolDefinition(
 		}),
 		renderCall(args, theme, context) {
 			if (isLogsAction(args)) return new HiddenComponent();
-			const title = theme.fg("toolTitle", theme.bold("subagent"));
+			const widgetOrdinal = isRunAction(args)
+				? widgetOrdinalFor(context?.toolCallId)
+				: undefined;
 			const summary = subagentCallSummary(args);
 			const rest = summary.startsWith("subagent ")
 				? summary.slice("subagent ".length)
 				: summary;
-			const base = `${title} ${theme.fg("muted", rest)}`;
+			const makeBase = (progress: LiveProgress | undefined) => {
+				const hasPersistedNumber =
+					progress?.sessionOrdinal !== undefined ||
+					(progress?.sessionOrdinals?.length ?? 0) > 0;
+				const numberSource = hasPersistedNumber
+					? progress
+					: widgetOrdinal === undefined
+						? progress
+						: ({ ...progress, sessionOrdinal: widgetOrdinal } as LiveProgress);
+				const title = theme.fg(
+					"toolTitle",
+					theme.bold(`subagent${subagentNumberSuffix(numberSource)}`),
+				);
+				return `${title} ${theme.fg("muted", rest)}`;
+			};
 			if (
 				isRunAction(args) &&
 				context?.toolCallId &&
@@ -1541,13 +1627,11 @@ function buildSubagentToolDefinition(
 						? args.cwd
 						: context.cwd;
 				attachProgress(toolCallId, requestedCwd, () => invalidate());
-				return new ProgressLineComponent(base, toolCallId);
+				return new ProgressLineComponent(makeBase, toolCallId);
 			}
-			return new SingleLineComponent(base);
+			return new SingleLineComponent(makeBase(undefined));
 		},
 		renderResult(result, options, theme, context) {
-			if (!options.isPartial && context?.toolCallId)
-				detachProgress(context.toolCallId);
 			const payload = result.details ?? (() => {
 				const text = result.content.find(
 					(item): item is ToolTextContent => item.type === "text",
@@ -1567,7 +1651,16 @@ function buildSubagentToolDefinition(
 					? payload.result.status
 					: isRecord(payload)
 						? payload.status
-						: undefined;
+					: undefined;
+			if (!options.isPartial && context?.toolCallId) {
+				const terminalStatus =
+					settledStatus === "failed" ||
+					settledStatus === "cancelled" ||
+					settledStatus === "completed"
+						? settledStatus
+						: "completed";
+				settleProgress(context.toolCallId, terminalStatus);
+			}
 			if (
 				isLogsAction(context?.args) ||
 				(isRecord(payload) && payload.action === "logs")
@@ -1575,7 +1668,9 @@ function buildSubagentToolDefinition(
 				return new HiddenComponent();
 			const color = options.isPartial
 				? "warning"
-				: settledStatus === "failed" || settledStatus === "cancelled"
+				: settledStatus === "failed" ||
+					settledStatus === "cancelled" ||
+					settledStatus === "not-found"
 					? "error"
 					: "success";
 			return new SingleLineComponent(theme.fg(color, summary));
@@ -1587,6 +1682,7 @@ function buildSubagentToolDefinition(
 
 			try {
 				const raw = isRecord(params) ? params : {};
+				if (isRunAction(raw)) widgetOrdinalFor(toolCallId);
 				const parentSessionId = parentSessionIdFromCtx(ctx);
 				const lifecycle = await lifecycleAction(raw, cwd, parentSessionId);
 				if (lifecycle !== null) return lifecycle;

@@ -111,6 +111,26 @@ try {
 	});
 	assert.equal(missingInterrupt.status, "not-found");
 
+	const missingWait = await waitForSubagent({
+		cwd,
+		runId: "run_missing_api_wait",
+		timeoutMs: 60_000,
+	});
+	assert.equal(missingWait.status, "not-found");
+	assert.equal(missingWait.outcome, "not-found");
+
+	const missingStatus = await getSubagentStatus({
+		cwd,
+		runId: "run_missing_api_status",
+	});
+	assert.equal(missingStatus, null);
+
+	await assert.rejects(
+		() => getSubagentStatus({ cwd, runId: "../invalid-run-id" }),
+		/runId must contain only letters, numbers/,
+		"malformed run IDs should be rejected by the API boundary",
+	);
+
 	const legacyDir = join(cwd, ".pi/agent/runs/run_api_legacy/task-1");
 	await mkdir(legacyDir, { recursive: true });
 	const legacyOutput = ".pi/agent/runs/run_api_legacy/task-1/output.log";

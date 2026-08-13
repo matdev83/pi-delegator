@@ -32,6 +32,7 @@ function writeRunRecord(
 	completedAt = null,
 	updatedAt = new Date().toISOString(),
 	targetStartedAt = startedAt,
+	sessionOrdinal,
 ) {
 	const targetRunDir = join(runsDir, targetRunId);
 	mkdirSync(join(targetRunDir, "attempts", targetAttemptId), { recursive: true });
@@ -48,6 +49,7 @@ function writeRunRecord(
 			completedAt,
 			latestAttemptId: targetAttemptId,
 			attempts: [],
+			...(sessionOrdinal === undefined ? {} : { sessionOrdinal }),
 		}),
 	);
 }
@@ -109,6 +111,7 @@ writeRunRecord(
 	null,
 	new Date().toISOString(),
 	new Date(Date.now() - 2_000).toISOString(),
+	7,
 );
 writeFileSync(
 	join(boundAttemptDir, "pi-events.jsonl"),
@@ -135,6 +138,7 @@ await sleep(1200);
 progress = lp.getProgress("tool-call-bound");
 check("explicit binding selects the exact run", progress?.runId === boundRunId, progress?.runId);
 check("explicit binding reads the exact attempt", progress?.lastLine === "bound target", progress?.lastLine);
+check("explicit binding retains the stable session number", progress?.sessionOrdinal === 7, String(progress?.sessionOrdinal));
 
 writeFileSync(
 	join(boundAttemptDir, "pi-events.jsonl"),
@@ -146,6 +150,26 @@ writeFileSync(
 await sleep(1200);
 progress = lp.getProgress("tool-call-bound");
 check("streaming delta is shown as live text", progress?.lastLine === "latest assistant delta", progress?.lastLine);
+
+writeFileSync(
+	join(boundAttemptDir, "pi-events.jsonl"),
+	JSON.stringify({
+		type: "message_update",
+		assistantMessageEvent: { type: "text_delta", delta: "latest assistant delta" },
+	}) + "\n" +
+	JSON.stringify({
+		type: "tool_execution_update",
+		toolCallId: "tool-live",
+		partialResult: { text: "tool progress" },
+	}) + "\n",
+);
+await sleep(1200);
+progress = lp.getProgress("tool-call-bound");
+check(
+	"protocol tool updates do not leak raw JSON",
+	progress?.lastLine === "latest assistant delta",
+	progress?.lastLine,
+);
 
 const parallelRunIds = ["run_parallel_a", "run_parallel_b"];
 const parallelAttemptIds = ["attempt_parallel_a", "attempt_parallel_b"];
@@ -184,6 +208,46 @@ writeFileSync(
 await sleep(1200);
 progress = lp.getProgress("tool-call-bound");
 check("terminal result overrides stale running registry", progress?.status === "completed", progress?.status);
+
+// Host-level tool completion must freeze a still-running cached snapshot even
+// when the registry/result file has not been finalized yet.
+const settleRunId = "run_settle_host";
+const settleAttemptId = "attempt_settle_host";
+const settleAttemptDir = join(runsDir, settleRunId, "attempts", settleAttemptId);
+writeRunRecord(settleRunId, settleAttemptId, "running");
+writeFileSync(
+	join(settleAttemptDir, "pi-events.jsonl"),
+	JSON.stringify({ type: "message", message: { text: "host settled target" } }) + "\n",
+);
+lp.attachProgress("tool-call-settle", cwd, () => { invalidations += 1; });
+lp.bindProgress("tool-call-settle", cwd, settleRunId, settleAttemptId);
+
+const independentRunId = "run_settle_independent";
+const independentAttemptId = "attempt_settle_independent";
+const independentAttemptDir = join(runsDir, independentRunId, "attempts", independentAttemptId);
+writeRunRecord(independentRunId, independentAttemptId, "running");
+writeFileSync(
+	join(independentAttemptDir, "pi-events.jsonl"),
+	JSON.stringify({ type: "message", message: { text: "independent active target" } }) + "\n",
+);
+lp.attachProgress("tool-call-settle-independent", cwd, () => { invalidations += 1; });
+lp.bindProgress("tool-call-settle-independent", cwd, independentRunId, independentAttemptId);
+await sleep(1200);
+lp.settleProgress("tool-call-settle", "completed", Date.now());
+const settled = lp.getProgress("tool-call-settle");
+const settledLabel = lp.formatProgress(settled);
+const independentBefore = lp.getProgress("tool-call-settle-independent");
+await sleep(1200);
+check("host completion freezes an active snapshot", settled?.status === "completed" && lp.getProgress("tool-call-settle")?.status === "completed", settled?.status);
+check("frozen snapshot uses terminal label", settledLabel.startsWith("done in"), settledLabel);
+check("settling one widget leaves another widget running", independentBefore?.status === "running" && lp.getProgress("tool-call-settle-independent")?.status === "running", independentBefore?.status);
+
+// A redraw after completion must not reattach the finished tool call and make
+// its timer live again.
+lp.attachProgress("tool-call-settle", cwd, () => { invalidations += 1; });
+lp.bindProgress("tool-call-settle", cwd, settleRunId, settleAttemptId);
+await sleep(1200);
+check("completed widget stays frozen after a redraw", lp.getProgress("tool-call-settle")?.status === "completed", lp.getProgress("tool-call-settle")?.status);
 
 lp.resetProgress();
 check("resetProgress clears cache", lp.getProgress("tool-call-1") === undefined);

@@ -11,7 +11,7 @@ permission notice remain in `LICENSE`.
 
 Copyright (c) 2026 AgwaB — original work.
 
-Copyright (c) 2026 Mateusz (matdev83) — subsequent modifications.
+Copyright (c) 2026 matdev83 — subsequent modifications.
 
 The independently maintained project is not affiliated with or endorsed by
 AgwaB or the original `pi-subagent` project.

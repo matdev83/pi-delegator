@@ -128,6 +128,9 @@ async function writeIndexedRun(indexDir, cwd, runId, attemptId, options) {
 				...(options.parentSessionId
 					? { parentSessionId: options.parentSessionId }
 					: {}),
+				...(options.sessionOrdinal === undefined
+					? {}
+					: { sessionOrdinal: options.sessionOrdinal }),
 				mode: "single",
 				status: options.status,
 				failureKind: options.failureKind ?? null,
@@ -269,6 +272,81 @@ async function main() {
 		"tool-call-second",
 		"a subsequent widget must bind only to its own tool call",
 	);
+	const fallbackNumberComponent = registeredTool.renderCall(
+		{ agent: "fallback", task: "Fallback ordinal" },
+		callTheme,
+		{
+			toolCallId: "tool-call-fallback-ordinal",
+			cwd: process.cwd(),
+			invalidate() {},
+		},
+	);
+	assert.match(
+		renderText(fallbackNumberComponent),
+		/subagent #3 run · single · fallback/,
+		"an active widget should show its session number before run metadata is available",
+	);
+	registeredTool.renderResult(
+		{
+			content: [{ type: "text", text: '{"status":"completed"}' }],
+			details: undefined,
+			isError: false,
+		},
+		{ expanded: false, isPartial: false },
+		callTheme,
+		{ toolCallId: "tool-call-fallback-ordinal" },
+	);
+	const numberedRoot = await mkdtemp(join(tmpdir(), "pi-delegator-numbered-row-"));
+	const numberedRunId = "run_numbered_row";
+	const numberedAttemptId = "attempt_numbered_row";
+	const numberedAttemptDir = join(
+		numberedRoot,
+		".pi/agent/runs",
+		numberedRunId,
+		"attempts",
+		numberedAttemptId,
+	);
+	await mkdir(numberedAttemptDir, { recursive: true });
+	await writeFile(
+		join(numberedRoot, ".pi/agent/runs", numberedRunId, "run.json"),
+		JSON.stringify({
+			schemaVersion: 2,
+			runId: numberedRunId,
+			mode: "single",
+			status: "running",
+			backend: "headless",
+			sessionOrdinal: 4,
+			startedAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			completedAt: null,
+			latestAttemptId: numberedAttemptId,
+			attempts: [],
+		}),
+	);
+	const numberedComponent = registeredTool.renderCall(
+		{ agent: "worker", task: "Verify stable numbering" },
+		callTheme,
+		{
+			toolCallId: "tool-call-numbered",
+			cwd: numberedRoot,
+			invalidate() {},
+		},
+	);
+	await waitFor(
+		() => renderText(numberedComponent).includes("subagent #4 run"),
+		"stable number in active tool row",
+	);
+	registeredTool.renderResult(
+		{
+			content: [{ type: "text", text: '{"status":"completed"}' }],
+			details: undefined,
+			isError: false,
+		},
+		{ expanded: false, isPartial: false },
+		callTheme,
+		{ toolCallId: "tool-call-numbered", args: {} },
+	);
+	await rm(numberedRoot, { recursive: true, force: true });
 	for (const toolCallId of ["tool-call-first", "tool-call-second"]) {
 		registeredTool.renderResult(
 			{
@@ -1180,6 +1258,27 @@ async function main() {
 			"run_execute_signature",
 			"execute should also support the older Pi tool-call order",
 		);
+		const missingToolStatus = await registeredTool.execute(
+			"tool-call-missing-status",
+			{ action: "status", runId: "run_missing_tool_status" },
+			() => {},
+			{ cwd: executeCwd, sessionManager: { getSessionId: () => sessionId } },
+			new AbortController().signal,
+		);
+		const missingToolStatusPayload = JSON.parse(missingToolStatus.content[0].text);
+		assert.equal(missingToolStatusPayload.status, "not-found");
+		assert.equal(missingToolStatus.isError, true);
+		assert.equal(missingToolStatusPayload.snapshot, null);
+		const missingToolLogs = await registeredTool.execute(
+			"tool-call-missing-logs",
+			{ action: "logs", runId: "run_missing_tool_logs" },
+			() => {},
+			{ cwd: executeCwd, sessionManager: { getSessionId: () => sessionId } },
+			new AbortController().signal,
+		);
+		const missingToolLogsPayload = JSON.parse(missingToolLogs.content[0].text);
+		assert.equal(missingToolLogsPayload.status, "not-found");
+		assert.equal(missingToolLogs.isError, true);
 
 		await writeIndexedRun(indexDir, cwd, "run_slash_kill_one", "attempt-1", {
 			status: "running",
@@ -1226,6 +1325,60 @@ async function main() {
 			killRequestedCount + unsupportedCount >= 2,
 			"kill all should report an aggregate result for every active run",
 		);
+
+		await writeIndexedRun(indexDir, cwd, "run_watch_by_id", "attempt-1", {
+			status: "completed",
+			backend: "headless",
+			parentSessionId: sessionId,
+			sessionOrdinal: 10,
+			log: "watch by explicit run id",
+		});
+		const watchedById = await runCommand("watch run_watch_by_id", {
+			sessionManager: { getSessionId: () => sessionId },
+		});
+		assert.ok(
+			watchedById.component &&
+			/rendered|run_watch_by_id/.test(renderText(watchedById.component)),
+			"watch should resolve a run by explicit run ID in the current session",
+		);
+		watchedById.component?.handleInput("q");
+
+		const watchedByNumber = await runCommand("watch 10", {
+			sessionManager: { getSessionId: () => sessionId },
+		});
+		assert.ok(
+			watchedByNumber.component?.render(120).join("\n").includes("run_watch_by_id"),
+			"watch should resolve stable numbers beyond the keyboard shortcut range",
+		);
+		watchedByNumber.component?.handleInput("q");
+
+		const beforeInvalidWatch = notifications.length;
+		await runCommand("watch ../invalid-run-id", {
+			sessionManager: { getSessionId: () => sessionId },
+		});
+		assert.match(
+			notifications.at(-1)?.message ?? "",
+			/Invalid subagent run ID/,
+			"watch should reject malformed run IDs clearly",
+		);
+		assert.equal(notifications.length, beforeInvalidWatch + 1);
+
+		await writeIndexedRun(indexDir, cwd, "run_watch_other_session", "attempt-1", {
+			status: "completed",
+			backend: "headless",
+			parentSessionId: "session-other",
+			log: "other session watch target",
+		});
+		const beforeForeignWatch = notifications.length;
+		await runCommand("watch run_watch_other_session", {
+			sessionManager: { getSessionId: () => sessionId },
+		});
+		assert.match(
+			notifications.at(-1)?.message ?? "",
+			/not found in this session/,
+			"watch should not expose a run from another session",
+		);
+		assert.equal(notifications.length, beforeForeignWatch + 1);
 
 		console.log(
 			JSON.stringify(

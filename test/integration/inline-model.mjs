@@ -38,6 +38,7 @@ try {
   assert.equal(result.artifacts.some((artifact) => artifact.type === "stdout"), false, "inline should not store stdout streams by default");
   const stderr = await readArtifact(cwd, result, "stderr");
   const output = await readArtifact(cwd, result, "output");
+  const worker = await readArtifact(cwd, result, "worker");
   await access(join(cwd, artifactByType(result, "result").path));
 
   if (result.status !== "completed") {
@@ -65,6 +66,13 @@ try {
   assert.equal(result.failureKind, null);
   assert.equal(result.exitCode, null);
   assert.match(output, /inline-model-ok/);
+  assert.match(worker, /"backend": "inline"/);
+  assert.match(worker, /"task": "Reply exactly: inline-model-ok"/);
+  const liveEvents = await readFile(
+    join(cwd, ".pi", "agent", "runs", result.runId, "attempts", result.attemptId, "pi-events.jsonl"),
+    "utf8",
+  );
+  assert.match(liveEvents, /"type":"message_update"/);
 
   console.log(
     JSON.stringify(

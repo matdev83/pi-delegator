@@ -2,17 +2,17 @@ import {
 	mkdir,
 	readdir,
 	readFile,
-	rename,
 	stat,
 	unlink,
 	writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { renameWithRetry } from "../core/atomic-file.ts";
 import { readDelegatorEnv } from "../core/env.ts";
+import { assertSafeId } from "../core/identifiers.ts";
 
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
-const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const RUN_LOCATOR_SCHEMA_VERSION = 1 as const;
 
 export interface RunRefLocator {
@@ -42,13 +42,6 @@ export interface RunLocatorListResult {
 	invalidCount: number;
 	skippedCount: number;
 	prunedCount: number;
-}
-
-function assertSafeId(name: string, value: string): void {
-	if (!SAFE_ID_PATTERN.test(value))
-		throw new Error(
-			`${name} must contain only letters, numbers, dots, underscores, or dashes.`,
-		);
 }
 
 function isInsideOrEqual(parent: string, child: string): boolean {
@@ -174,7 +167,7 @@ export async function writeRunLocator(
 	await mkdir(dirname(path), { recursive: true });
 	const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
 	await writeFile(tempPath, `${JSON.stringify(locator, null, 2)}\n`);
-	await rename(tempPath, path);
+	await renameWithRetry(tempPath, path);
 }
 
 export async function readRunLocator(

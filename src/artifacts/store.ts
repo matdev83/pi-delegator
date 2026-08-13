@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { appendFile, mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { renameWithRetry } from "../core/atomic-file.ts";
+import { assertSafeId } from "../core/identifiers.ts";
 import {
   createResultEnvelope,
   mergeArtifactRefs,
@@ -11,7 +13,6 @@ import {
 } from "./result.ts";
 
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
-const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 const ARTIFACT_FILENAMES: Record<ArtifactType, string> = {
   result: "result.json",
@@ -60,12 +61,6 @@ export interface AttemptArtifactStore {
 
 export type CreateTaskArtifactStoreOptions = CreateAttemptArtifactStoreOptions;
 export type TaskArtifactStore = AttemptArtifactStore;
-
-function assertSafeId(name: string, value: string): void {
-  if (!SAFE_ID_PATTERN.test(value)) {
-    throw new Error(`${name} must contain only letters, numbers, dots, underscores, or dashes.`);
-  }
-}
 
 function isInsideOrEqual(parent: string, child: string): boolean {
   const childRelative = relative(parent, child);
@@ -147,7 +142,7 @@ export async function createAttemptArtifactStore(options: CreateAttemptArtifactS
     const resultPath = pathFor("result");
     const tempPath = `${resultPath}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tempPath, `${JSON.stringify(result, null, 2)}\n`);
-    await rename(tempPath, resultPath);
+    await renameWithRetry(tempPath, resultPath);
     return result;
   }
 

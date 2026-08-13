@@ -27,6 +27,9 @@ export interface LiveProgress {
 	completedAt: number | null;
 	lastActivityAt: number;
 	lastLine: string;
+	/** Stable launch number(s) within the parent Pi session. */
+	sessionOrdinal?: number;
+	sessionOrdinals?: number[];
 }
 
 interface ProgressEntry {
@@ -48,10 +51,15 @@ interface ScannedRun {
 	startedAt: number;
 	completedAt: number | null;
 	latestAttemptId: string | null;
+	sessionOrdinal?: number;
 }
 
 const entries = new Map<string, ProgressEntry>();
 const progressCache = new Map<string, LiveProgress>();
+// A host can redraw a completed tool call after its final result has rendered.
+// Keep terminal identities separate from the active-entry map so that redraw
+// cannot accidentally reattach polling to an already-finished row.
+const settledToolCalls = new Set<string>();
 let timer: NodeJS.Timeout | undefined;
 
 const TICK_MS = 1_000;
@@ -81,6 +89,7 @@ export function attachProgress(
 	cwd: string,
 	invalidate: () => void,
 ): void {
+	if (settledToolCalls.has(toolCallId)) return;
 	const existing = entries.get(toolCallId);
 	if (existing !== undefined) {
 		existing.invalidate = invalidate;
@@ -115,6 +124,7 @@ export function bindProgress(
 	attemptId: string,
 	startedAt?: number,
 ): void {
+	if (settledToolCalls.has(toolCallId)) return;
 	const existing = entries.get(toolCallId);
 	if (existing === undefined) {
 		entries.set(toolCallId, {
@@ -145,11 +155,30 @@ export function bindProgress(
 	ensureTimer();
 }
 
-/** Stop tracking a tool call. The cached snapshot (if any) is kept so the
- * already-rendered row does not flicker; it is dropped when the row is
- * re-rendered by the host after tool completion. */
+/** Stop active polling for a tool call. The cached snapshot (if any) is kept
+ * so the already-rendered row does not flicker; terminal rows are frozen by
+ * settleProgress before this is called. */
 export function detachProgress(toolCallId: string): void {
 	if (entries.delete(toolCallId)) stopTimerIfIdle();
+}
+
+/** Freeze a tool row at its terminal result, even if registry finalization is
+ * delayed or the host does not redraw the row with a result component. */
+export function settleProgress(
+	toolCallId: string,
+	status: "completed" | "failed" | "cancelled" = "completed",
+	completedAt = Date.now(),
+): void {
+	settledToolCalls.add(toolCallId);
+	const current = progressCache.get(toolCallId);
+	if (current !== undefined) {
+		progressCache.set(toolCallId, {
+			...current,
+			status,
+			completedAt: current.completedAt ?? completedAt,
+		});
+	}
+	detachProgress(toolCallId);
 }
 
 /** Latest progress snapshot for a tool call, if one has been derived. */
@@ -160,6 +189,7 @@ export function getProgress(toolCallId: string): LiveProgress | undefined {
 /** Drop cached snapshots for every tracked call (extension reload/teardown). */
 export function resetProgress(): void {
 	progressCache.clear();
+	settledToolCalls.clear();
 	for (const toolCallId of [...entries.keys()]) detachProgress(toolCallId);
 }
 
@@ -360,6 +390,12 @@ function scannedRunFromRecord(
 			typeof record.latestAttemptId === "string"
 				? record.latestAttemptId
 				: null,
+		sessionOrdinal:
+			typeof record.sessionOrdinal === "number" &&
+			Number.isInteger(record.sessionOrdinal) &&
+			record.sessionOrdinal > 0
+				? record.sessionOrdinal
+				: undefined,
 	};
 }
 
@@ -429,6 +465,9 @@ async function buildProgress(
 		completedAt,
 		lastActivityAt,
 		lastLine: clip(sanitizeLine(lastLine), LAST_LINE_MAX),
+		...(run.sessionOrdinal === undefined
+			? {}
+			: { sessionOrdinal: run.sessionOrdinal }),
 	};
 }
 
@@ -449,6 +488,13 @@ function aggregateProgress(progresses: LiveProgress[]): LiveProgress {
 	const latest = [...progresses].sort(
 		(a, b) => b.lastActivityAt - a.lastActivityAt,
 	)[0]!;
+	const sessionOrdinals = progresses
+		.flatMap((progress) =>
+			progress.sessionOrdinals ??
+			(progress.sessionOrdinal === undefined ? [] : [progress.sessionOrdinal]),
+		)
+		.filter((value, index, values) => values.indexOf(value) === index)
+		.sort((a, b) => a - b);
 	return {
 		...first,
 		status,
@@ -462,6 +508,12 @@ function aggregateProgress(progresses: LiveProgress[]): LiveProgress {
 			: null,
 		lastActivityAt: latest.lastActivityAt,
 		lastLine: latest.lastLine,
+		...(sessionOrdinals.length === 0
+			? {}
+			: {
+					sessionOrdinal: sessionOrdinals[0],
+					sessionOrdinals,
+				}),
 	};
 }
 
@@ -493,19 +545,22 @@ function meaningfulLastLine(text: string): string {
 		.split(/\r?\n/)
 		.map((line) => sanitizeLine(line))
 		.filter((line) => line.length > 0);
-	if (lines.length === 0) return "";
-	const last = lines.at(-1) ?? "";
-	if (last.startsWith("{") && last.endsWith("}")) {
+	for (const line of lines.reverse()) {
+		if (!line.startsWith("{") || !line.endsWith("}")) return line;
 		try {
-			const event = JSON.parse(last) as Record<string, unknown>;
+			const event = JSON.parse(line) as Record<string, unknown>;
 			const extracted = extractEventText(event);
 			if (extracted !== undefined && extracted.length > 0)
 				return extracted;
+			// Protocol events without human-readable text, such as
+			// tool_execution_update, must not leak their raw JSON into the widget.
+			if (typeof event.type === "string") continue;
 		} catch {
-			// Not a parseable JSON event; use the raw line below.
+			// Not a parseable JSON event; keep the raw line visible.
+			return line;
 		}
 	}
-	return last;
+	return "";
 }
 
 function extractEventText(
