@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { readDelegatorEnv } from "../core/env.ts";
 
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
 const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -71,7 +72,7 @@ function assertSafeRunsDir(cwd: string, runsDir: string | undefined): void {
 }
 
 function runIndexDir(): string {
-	const override = process.env.PI_SUBAGENT_RUN_INDEX_DIR;
+	const override = readDelegatorEnv("RUN_INDEX_DIR");
 	return resolve(
 		override && override.length > 0
 			? override
@@ -87,7 +88,7 @@ function runLocatorPath(runId: string): string {
 const DEFAULT_LOCATOR_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
 function locatorPruneAfterMs(): number {
-	const raw = process.env.PI_SUBAGENT_RUN_LOCATOR_PRUNE_AFTER_MS;
+	const raw = readDelegatorEnv("RUN_LOCATOR_PRUNE_AFTER_MS");
 	if (raw !== undefined && raw.length > 0) {
 		const parsed = Number.parseInt(raw, 10);
 		if (Number.isFinite(parsed)) return parsed;

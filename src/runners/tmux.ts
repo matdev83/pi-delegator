@@ -198,7 +198,7 @@ async function runTmuxProcess(options: RunTmuxProcessOptions): Promise<{
 		};
 	}
 
-	const sessionName = `pi-subagent-${store.runId}-${store.attemptId}`.replace(
+	const sessionName = `pi-delegator-${store.runId}-${store.attemptId}`.replace(
 		/[^A-Za-z0-9_-]/g,
 		"-",
 	);

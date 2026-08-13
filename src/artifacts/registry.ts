@@ -16,6 +16,7 @@ import type {
 	ResolvedBackend,
 	Status,
 } from "../core/constants.ts";
+import { readDelegatorEnv } from "../core/env.ts";
 import type {
 	ArtifactRef,
 	ResultEnvelope,
@@ -1058,7 +1059,7 @@ export async function appendRunEvent(
 const DEFAULT_EVENT_READ_CACHE_MAX = 64;
 
 function eventReadCacheMax(): number {
-	const raw = process.env.PI_SUBAGENT_EVENT_READ_CACHE_MAX;
+	const raw = readDelegatorEnv("EVENT_READ_CACHE_MAX");
 	if (raw !== undefined && raw.length > 0) {
 		const parsed = Number.parseInt(raw, 10);
 		if (Number.isFinite(parsed)) return Math.max(0, parsed);

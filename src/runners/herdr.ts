@@ -281,7 +281,7 @@ async function runHerdrProcess(options: RunHerdrProcessOptions): Promise<{
 		workerScript(argv, cwd, eventPath, stderrPath, metaPath),
 	);
 
-	const label = `pi-subagent-${store.runId}`.replace(/[^A-Za-z0-9_-]/g, "-");
+	const label = `pi-delegator-${store.runId}`.replace(/[^A-Za-z0-9_-]/g, "-");
 	let workspace: HerdrWorkspace | null = null;
 	try {
 		workspace = await createHerdrWorkspace(cwd, label);

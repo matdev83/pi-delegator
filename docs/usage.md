@@ -1,16 +1,22 @@
-# pi-subagent Usage
+# pi-delegator Usage
 
 Detailed usage reference for the public Pi tool **`subagent`**.
 
 ## Install
 
 ```bash
-pi install npm:@agwab/pi-subagent
+pi install npm:pi-delegator
 ```
 
 Reload Pi after installation.
 
 Requires Node.js `>=22.19.0`.
+
+When migrating from `@agwab/pi-subagent`, remove or disable it before loading
+`pi-delegator`; both packages expose the same tool and slash-command names.
+Existing run artifacts remain compatible. New environment configuration should
+use the `PI_DELEGATOR_*` namespace, while historical `PI_SUBAGENT_*` names are
+accepted as lower-priority compatibility aliases.
 
 ## Tool surface
 
@@ -117,7 +123,7 @@ import {
   interruptSubagent,
   reconcileSubagentRun,
   recordSubagentChildEvent,
-} from "@agwab/pi-subagent/api";
+} from "pi-delegator/api";
 
 const run = await runSubagent({
   cwd: process.cwd(),
@@ -144,7 +150,7 @@ await recordSubagentChildEvent({
 
 `runSubagent` accepts the same run options as the tool, plus an optional `signal`. Existing-run helpers accept `runId`, optional `cwd`, optional `attemptId`, and optional `runsDir`; when `cwd` is omitted they use the global locator index first and fall back to the current cwd for legacy records. The API is intentionally object-only and does not expose the lower-level runner internals.
 
-The code API is ESM-only. Import `@agwab/pi-subagent/api`; do not deep-import internal files such as `src/orchestrate/*` because only documented package subpaths are public.
+The code API is ESM-only. Import `pi-delegator/api`; do not deep-import internal files such as `src/orchestrate/*` because only documented package subpaths are public.
 
 Project-local agents are repository-controlled. Project-local agent confirmation is disabled by default; use trusted repositories or constrain lookup with `agentScope:"global"`. The code API has no interactive prompt, so setting `confirmProjectAgents:true` rejects project-local agents instead of prompting.
 
@@ -259,7 +265,7 @@ For `status`, `logs`, `wait`, `interrupt`, `mark-background`, and `reconcile`, t
 2. Otherwise, check the current cwd's `.pi/agent/runs` for legacy/local records.
 3. Otherwise, resolve `runId` through the global locator index and read the pointed-to run directory.
 
-The locator index is only a pointer for finding runs across cwd boundaries. `run.json`, `events.jsonl`, and attempt `result.json` files remain the source of truth. Malformed or oversized locator files older than the locator-prune threshold are removed during index reads; the default threshold is 30 days and can be tuned with `PI_SUBAGENT_RUN_LOCATOR_PRUNE_AFTER_MS` (`-1` disables pruning). The panel also prunes old missing-directory locators after session/cwd pre-filtering so global scans do not touch every run directory unnecessarily.
+The locator index is only a pointer for finding runs across cwd boundaries. `run.json`, `events.jsonl`, and attempt `result.json` files remain the source of truth. Malformed or oversized locator files older than the locator-prune threshold are removed during index reads; the default threshold is 30 days and can be tuned with `PI_DELEGATOR_RUN_LOCATOR_PRUNE_AFTER_MS` (`-1` disables pruning). Historical `PI_SUBAGENT_*` environment names remain accepted as compatibility aliases, but `PI_DELEGATOR_*` names take precedence. The panel also prunes old missing-directory locators after session/cwd pre-filtering so global scans do not touch every run directory unnecessarily.
 
 ## Common run options
 
@@ -370,7 +376,7 @@ failed/cancelled -> capture status/diff artifacts, keep the worktree for debuggi
 
 Worktree evidence is recorded in `result.json` under `workspace.worktreeCleanupStatus`, `workspace.worktreeStatusPath`, and `workspace.worktreeDiffPath`.
 
-Kept worktrees (from failed or cancelled runs) live in `.pi-subagent-worktrees/` **next to** the repository root, not inside it, and are never pruned automatically. To clean up after debugging:
+Kept worktrees (from failed or cancelled runs) live in the compatibility path `.pi-subagent-worktrees/` **next to** the repository root, not inside it, and are never pruned automatically. The historical directory name is retained so upgrades do not orphan existing worktrees. To clean up after debugging:
 
 ```bash
 git worktree list                      # inspect registered worktrees

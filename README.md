@@ -1,19 +1,20 @@
-# pi-subagent
+# pi-delegator
 
-**Minimal subagent runtime for Pi.**
+**Cross-platform subagent delegation runtime for Pi.**
 
-[![npm](https://img.shields.io/npm/v/@agwab/pi-subagent.svg)](https://www.npmjs.com/package/@agwab/pi-subagent)
+[![CI](https://github.com/matdev83/pi-delegator/actions/workflows/ci.yml/badge.svg)](https://github.com/matdev83/pi-delegator/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/pi-delegator.svg)](https://www.npmjs.com/package/pi-delegator)
 
-`pi-subagent` adds one focused tool: `subagent`. It gives Pi the essentials for isolated worker runs — parallel fan-out, sandbox/worktree controls, durable artifacts, and async status.
+`pi-delegator` adds one focused tool, `subagent`, plus lifecycle commands and live TUI observability. It supports isolated worker runs, parallel fan-out, sandbox/worktree controls, durable artifacts, async execution, native Windows workers, and visible Herdr or tmux backends.
 
-It is intentionally small, so you can add it to a project when you need subagents and remove it when you do not.
+This is an independently maintained derivative of [AgwaB/pi-subagent](https://github.com/AgwaB/pi-subagent), based on upstream `v0.4.8`. It is not affiliated with or endorsed by the original project. See [NOTICE.md](./NOTICE.md) for provenance and attribution.
 
-npm package: [`@agwab/pi-subagent`](https://www.npmjs.com/package/@agwab/pi-subagent)
+npm package: [`pi-delegator`](https://www.npmjs.com/package/pi-delegator)
 
 ## Installation
 
 ```bash
-pi install npm:@agwab/pi-subagent
+pi install npm:pi-delegator
 ```
 
 Then reload Pi.
@@ -25,7 +26,13 @@ Platform support:
 - **Linux / macOS** — fully supported. Visible workers use `tmux` (must be installed and on `PATH`).
 - **Windows (native)** — `inline` and `headless` backends work out of the box. Visible workers use **`herdr`** ([herdr.dev](https://herdr.dev), a terminal workspace manager for coding agents) instead of tmux; request them with `backend: "herdr"` (or `visible: true` together with `backend: "herdr"`). The `tmux` backend is not available on native Windows; WSL2 is an option if you prefer tmux.
 
+Do not install `pi-delegator` alongside another extension that registers the `subagent` tool or `/subagent` commands. Remove or disable the other extension first, then reload Pi.
+
 For local development, add this package as a Pi extension source and reload Pi.
+
+### Migrating from `@agwab/pi-subagent`
+
+Remove the original package before installing `pi-delegator`; both extensions register the same `subagent` tool and `/subagent` command namespace. Existing run artifacts and the historical `.pi-subagent-worktrees` directory remain readable. New configuration should use `PI_DELEGATOR_*` environment variables; the previous `PI_SUBAGENT_*` names remain accepted as fallback aliases.
 
 ## Quick usage
 
@@ -175,7 +182,7 @@ While a subagent runs, the tool row in the transcript shows live progress (elaps
 Orchestrators can use the same runtime directly:
 
 ```ts
-import { runSubagent, getSubagentStatus } from "@agwab/pi-subagent/api";
+import { runSubagent, getSubagentStatus } from "pi-delegator/api";
 
 const run = await runSubagent({ agent: "reviewer", task: "Review this diff.", async: true });
 const status = await getSubagentStatus({ runId: run.runId });
@@ -184,3 +191,7 @@ const status = await getSubagentStatus({ runId: run.runId });
 ## Detailed docs
 
 - [`docs/usage.md`](./docs/usage.md) — full argument reference, code API, `action` behavior, backend selection, sandbox/worktree behavior, artifacts, and validation notes.
+
+## Attribution
+
+`pi-delegator` contains software originally developed for [`@agwab/pi-subagent`](https://github.com/AgwaB/pi-subagent) by AgwaB and distributed under the MIT License. The original copyright and license notice are retained in [LICENSE](./LICENSE). Subsequent cross-platform, lifecycle, observability, backend, and UX work is maintained independently by Mateusz (`matdev83`).

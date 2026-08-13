@@ -17,9 +17,15 @@ const [{ runSubagentTask }, artifacts] = await Promise.all([
 
 const payload = JSON.parse(await readFile(payloadPath, "utf8"));
 const { input, cwd, runId, attemptId } = payload;
+function delegatorEnv(suffix) {
+	return (
+		process.env[`PI_DELEGATOR_${suffix}`] ??
+		process.env[`PI_SUBAGENT_${suffix}`]
+	);
+}
 const heartbeatMs = Math.max(
 	50,
-	Number.parseInt(process.env.PI_SUBAGENT_HEARTBEAT_MS ?? "5000", 10) || 5000,
+	Number.parseInt(delegatorEnv("HEARTBEAT_MS") ?? "5000", 10) || 5000,
 );
 const runRef = { cwd, runId, runsDir: input?.runsDir };
 const workerProcessGroupId =
@@ -54,7 +60,7 @@ function sleep(ms) {
 
 async function maybeDelayTerminalWriteForTests() {
 	const delayMs = Number.parseInt(
-		process.env.PI_SUBAGENT_DURABLE_WORKER_TERMINAL_WRITE_DELAY_MS ?? "0",
+		delegatorEnv("DURABLE_WORKER_TERMINAL_WRITE_DELAY_MS") ?? "0",
 		10,
 	);
 	if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs);
@@ -153,7 +159,7 @@ function writeTerminalResult(options) {
 
 async function maybeDelayStartForTests() {
 	const delayMs = Number.parseInt(
-		process.env.PI_SUBAGENT_DURABLE_WORKER_START_DELAY_MS ?? "0",
+		delegatorEnv("DURABLE_WORKER_START_DELAY_MS") ?? "0",
 		10,
 	);
 	if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs);
@@ -210,7 +216,7 @@ await artifacts
 		process: {
 			pid: process.pid,
 			processGroupId: workerProcessGroupId,
-			command: "pi-subagent durable-worker",
+			command: "pi-delegator durable-worker",
 			workerPid: process.pid,
 			workerProcessGroupId,
 		},

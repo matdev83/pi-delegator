@@ -602,7 +602,7 @@ export function validateResolveInput(
 
 	if (raw.chain !== undefined) {
 		return failure(
-			'chain mode is not supported by pi-subagent; use mode:"parallel" for fanout or have the parent orchestrate sequencing.',
+			'chain mode is not supported by pi-delegator; use mode:"parallel" for fanout or have the parent orchestrate sequencing.',
 			backendForKnownFailure,
 		);
 	}

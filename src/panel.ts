@@ -15,6 +15,7 @@ import {
 	summarizeChildEvents,
 	type RunChildSummary,
 } from "./orchestrate/status.ts";
+import { readDelegatorEnv } from "./core/env.ts";
 
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
 const LIVE_REFRESH_MS = 1_500;
@@ -165,7 +166,7 @@ function displayEventLine(text: string, currentSessionId?: string): string {
 }
 
 function nowMs(): number {
-	const raw = process.env.PI_SUBAGENT_PANEL_NOW_MS;
+	const raw = readDelegatorEnv("PANEL_NOW_MS");
 	if (raw !== undefined && raw.length > 0) {
 		const parsed = Number.parseInt(raw, 10);
 		if (Number.isFinite(parsed)) return parsed;
