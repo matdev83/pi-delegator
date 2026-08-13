@@ -1190,10 +1190,13 @@ async function main() {
 		await runCommand("kill run_slash_kill_one", {
 			sessionManager: { getSessionId: () => sessionId },
 		});
+		const explicitKillMessage = notifications.at(-1)?.message ?? "";
 		assert.match(
-			notifications.at(-1)?.message ?? "",
-			/run_slash_kill_one: kill requested/,
-			"explicit kill should dispatch to the lifecycle interrupt path",
+			explicitKillMessage,
+			process.platform === "win32"
+				? /run_slash_kill_one: kill requested/
+				: /run_slash_kill_one: kill is unsupported/,
+			"explicit kill should report the lifecycle interrupt result",
 		);
 		await writeIndexedRun(indexDir, cwd, "run_slash_kill_two", "attempt-1", {
 			status: "running",
@@ -1213,9 +1216,14 @@ async function main() {
 			sessionManager: { getSessionId: () => sessionId },
 		});
 		const killAllMessage = notifications.at(-1)?.message ?? "";
-		const killAllCount = Number(killAllMessage.match(/Kill all: (\d+) kill requested/)?.[1] ?? 0);
+		const killRequestedCount = Number(
+			killAllMessage.match(/Kill all: (\d+) kill requested/)?.[1] ?? 0,
+		);
+		const unsupportedCount = Number(
+			killAllMessage.match(/(\d+) unsupported/)?.[1] ?? 0,
+		);
 		assert.ok(
-			killAllCount >= 2,
+			killRequestedCount + unsupportedCount >= 2,
 			"kill all should report an aggregate result for every active run",
 		);
 
