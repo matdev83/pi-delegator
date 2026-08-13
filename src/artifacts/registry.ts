@@ -2,11 +2,14 @@ import {
 	appendFile,
 	mkdir,
 	open,
+	readdir,
 	readFile,
 	rm,
 	stat,
 	writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { renameWithRetry } from "../core/atomic-file.ts";
 import type {
@@ -17,6 +20,7 @@ import type {
 	Status,
 } from "../core/constants.ts";
 import { readDelegatorEnv } from "../core/env.ts";
+import { assertSafeId } from "../core/identifiers.ts";
 import type {
 	ArtifactRef,
 	ResultEnvelope,
@@ -28,7 +32,6 @@ import type {
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
 const RUN_RECORD_SCHEMA_VERSION = 2 as const;
 const RUN_EVENT_SCHEMA_VERSION = 2 as const;
-const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 5_000;
 
@@ -95,6 +98,8 @@ export interface RunRecord {
 	correlationId?: string;
 	/** Pi session id of the parent session that launched this run. */
 	parentSessionId?: string;
+	/** Stable, one-based launch number within the parent Pi session. */
+	sessionOrdinal?: number;
 	mode: ExecutionMode;
 	status: Status;
 	failureKind: FailureKind | null;
@@ -191,13 +196,6 @@ export interface UpsertAttemptOptions extends RunRef {
 export type UpsertTaskOptions = Omit<UpsertAttemptOptions, "attemptId"> & {
 	taskId: string;
 };
-
-function assertSafeId(name: string, value: string): void {
-	if (!SAFE_ID_PATTERN.test(value))
-		throw new Error(
-			`${name} must contain only letters, numbers, dots, underscores, or dashes.`,
-		);
-}
 
 function isInsideOrEqual(parent: string, child: string): boolean {
 	const childRelative = relative(parent, child);
@@ -577,6 +575,69 @@ async function withRunMutation<T>(
 	});
 }
 
+async function nextSessionOrdinal(
+	parentSessionId: string | undefined,
+): Promise<number | undefined> {
+	if (parentSessionId === undefined) return undefined;
+	const runIndexOverride = readDelegatorEnv("RUN_INDEX_DIR");
+	const runIndexDir = resolve(
+		runIndexOverride && runIndexOverride.length > 0
+			? runIndexOverride
+			: join(homedir(), ".pi", "agent", "subagent-runs"),
+	);
+	const sessionKey = createHash("sha256")
+		.update(parentSessionId)
+		.digest("hex");
+	const sequencePath = join(
+		dirname(runIndexDir),
+		"subagent-session-ordinals",
+		`${sessionKey}.json`,
+	);
+	return await withFileLock(
+		`${sequencePath}.lock`,
+		async () => {
+			let allocatedThrough = 0;
+			try {
+				const stored = JSON.parse(
+					await readFile(sequencePath, "utf8"),
+				) as Record<string, unknown>;
+				if (
+					typeof stored.allocatedThrough === "number" &&
+					Number.isInteger(stored.allocatedThrough) &&
+					stored.allocatedThrough > 0
+				)
+					allocatedThrough = stored.allocatedThrough;
+			} catch {
+				// Initialize below. Existing locator count preserves monotonicity when
+				// upgrading during an active session.
+			}
+			if (allocatedThrough === 0) {
+				const locators = await readdir(runIndexDir, {
+					withFileTypes: true,
+				}).catch(() => []);
+				for (const locator of locators) {
+					if (!locator.isFile() || !locator.name.endsWith(".json")) continue;
+					try {
+						const record = JSON.parse(
+							await readFile(join(runIndexDir, locator.name), "utf8"),
+						) as Record<string, unknown>;
+						if (record.parentSessionId === parentSessionId)
+							allocatedThrough += 1;
+					} catch {
+						// Ignore unrelated or malformed index entries.
+					}
+				}
+			}
+			const next = allocatedThrough + 1;
+			await mkdir(dirname(sequencePath), { recursive: true });
+			const tempPath = `${sequencePath}.${process.pid}.${Date.now()}.tmp`;
+			await writeFile(tempPath, `${JSON.stringify({ allocatedThrough: next })}\n`);
+			await renameWithRetry(tempPath, sequencePath);
+			return next;
+		},
+	);
+}
+
 export async function readRunRecord(ref: RunRef): Promise<RunRecord | null> {
 	return await readRecordPath(runPaths(ref));
 }
@@ -622,6 +683,11 @@ export async function beginRunRecord(
 ): Promise<RunRecord> {
 	const now = toIso(options.startedAt);
 	return await withRunMutation(options, async (existing, paths) => {
+		const sessionOrdinal =
+			existing?.sessionOrdinal ??
+			(existing === null
+				? await nextSessionOrdinal(options.parentSessionId)
+				: undefined);
 		const nextAttempts = [
 			...(options.attempts ?? []),
 			...v1TasksToAttempts(options.tasks, now, options.backend),
@@ -661,6 +727,7 @@ export async function beginRunRecord(
 						...(options.parentSessionId === undefined
 							? {}
 							: { parentSessionId: options.parentSessionId }),
+						...(sessionOrdinal === undefined ? {} : { sessionOrdinal }),
 						mode: options.mode,
 						status: attempts.length > 0 ? aggregate.status : "pending",
 						failureKind: attempts.length > 0 ? aggregate.failureKind : null,

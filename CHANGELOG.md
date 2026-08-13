@@ -19,6 +19,9 @@ First independent `pi-delegator` release, derived from
 
 - Strengthened lifecycle tracking so terminal artifacts override stale process state.
 - Isolated transcript widgets by tool-call identity.
+- Restored native live tool output in `/subagent watch` through a bounded,
+  process-local transcript channel without persisting tool payload bodies.
+- Assigned stable, monotonically increasing subagent numbers per Pi session and aligned `/subagent watch N` with those numbers.
 - Expanded model routing to preserve extension-provided provider/model identifiers.
 
 See `NOTICE.md` for upstream provenance and attribution.

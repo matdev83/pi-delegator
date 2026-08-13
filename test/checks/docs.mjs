@@ -11,7 +11,7 @@ for (const command of [
 	"/subagent enable",
 	"/subagent disable",
 	"/subagent panel",
-	"/subagent watch [1-9]",
+	"/subagent watch [number|runId]",
 	"/subagent kill [runId]",
 	"/subagent kill all",
 ]) {

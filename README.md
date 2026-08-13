@@ -10,6 +10,12 @@ This is an independently maintained derivative of [AgwaB/pi-subagent](https://gi
 
 Package repository: [`matdev83/pi-delegator`](https://github.com/matdev83/pi-delegator)
 
+## Screenshot
+
+`/subagent watch` displaying a worker's live session output:
+
+![pi-delegator live subagent watch modal](./assets/subagent-demo.png)
+
 ## Installation
 
 ### Install from GitHub
@@ -226,12 +232,12 @@ Open the run monitor:
 | `/subagent enable` | Expose the `subagent` tool to the LLM for the current session. |
 | `/subagent disable` | Hide the `subagent` tool from the LLM for the current session. |
 | `/subagent panel` | Open the full-screen, filterable run monitor. |
-| `/subagent watch [1-9]` | Open the selected recent run in a live modal. |
+| `/subagent watch [number|runId]` | Open a current-session subagent by stable number or run ID in a live modal. |
 | `/subagent kill [runId]` | Kill the only active run or a specified run. |
 | `/subagent kill all` | Kill all active runs in the current Pi session. |
 
-The watch modal also has keyboard shortcuts for the first nine recent runs:
-`Alt+Shift+1` … `Ctrl+9`, with `Ctrl+Alt+1` … `Ctrl+Alt+9` as a fallback.
+The watch modal also has keyboard shortcuts for stable session numbers `#1` through `#9`:
+`Alt+Shift+1` … `Alt+Shift+9`, with `Ctrl+Shift+1` … `Ctrl+Shift+9` as a fallback.
 
 ### Live progress
 
@@ -239,7 +245,7 @@ While a subagent runs, the tool row in the transcript shows live progress (elaps
 
 ### Watch a run
 
-`Alt+Shift+1` … `Ctrl+9` (and `Ctrl+Alt+1` … `Ctrl+Alt+9` as a fallback) open a modal overlay with the live progress of the 1st … 9th most recent subagent run of the current session: status, elapsed time, last activity, task text, and a live tail of the run's output. `↑`/`↓`/`j`/`k` scroll, `q`/`esc` close. Shortcuts fire only while the input editor is focused.
+`/subagent watch <number>` opens the matching stable subagent number; `/subagent watch <runId>` opens a specific run ID from the current Pi session. A missing or malformed target produces a warning without opening a modal. `Alt+Shift+1` … `Alt+Shift+9` (and `Ctrl+Shift+1` … `Ctrl+Shift+9` as a fallback) open the matching stable number. `#1` is the first run, `#2` the next, and numbers keep rising. Tool rows display the same number after `subagent`; a parallel call displays its allocated range. The modal shows status, elapsed time, last activity, task text, and a live tail of the run's output. `Ctrl+Shift+U` opens the latest run. `↑`/`↓`/`j`/`k` scroll, `q`/`esc` close. Shortcuts fire only while the input editor is focused.
 
 ## Code API
 

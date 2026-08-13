@@ -21,7 +21,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { TUI } from "@earendil-works/pi-tui";
+import { isSafeId } from "./core/identifiers.ts";
 import type { LiveProgress } from "./live-progress.ts";
+import { readLiveTranscriptEvents } from "./live-transcript.ts";
 import { clip, stripAnsi } from "./core/text-width.ts";
 
 const WATCH_REFRESH_MS = 1_000;
@@ -30,6 +32,7 @@ const TAIL_LINES = 24;
 const execFileAsync = promisify(execFile);
 const TAIL_BYTES = 16_384;
 const PROGRESS_FILES = ["pi-events.jsonl", "output.log", "stderr.log", "result.json"];
+const LATEST_TARGET = Symbol("latest-subagent");
 
 interface WatchTheme {
 	fg?(color: string, text: string): string;
@@ -113,7 +116,7 @@ function sanitize(text: string): string {
 
 /**
  * Register alt+shift+1…9 / ctrl+shift+1…9 shortcuts opening the watcher modal
- * for the Nth most recent subagent run of the current session. Ctrl+number is
+ * for the stable, one-based subagent number in the current session. Ctrl+number is
  * intentionally avoided: terminals and host interrupt/keybinding layers can
  * encode those chords inconsistently on Windows.
  */
@@ -121,29 +124,39 @@ export function registerSubagentWatchShortcuts(pi: ExtensionAPI): void {
 	if (typeof pi.registerShortcut !== "function") return;
 	pi.registerShortcut("ctrl+shift+u" as KeyId, {
 		description: "Open the most recent subagent run",
-		handler: (ctx) => void openSubagentWatch(ctx, 0),
+		handler: (ctx) => void openLatestSubagentWatch(ctx),
 	});
 	for (let index = 1; index <= 9; index += 1) {
 		const digit = String(index) as Digit;
 		pi.registerShortcut(`alt+shift+${digit}` as KeyId, {
 			description: `Open progress of subagent #${index}`,
-			handler: (ctx) => void openSubagentWatch(ctx, index - 1),
+			handler: (ctx) => void openSubagentWatch(ctx, index),
 		});
 		pi.registerShortcut(`ctrl+shift+${digit}` as KeyId, {
 			description: `Open progress of subagent #${index} (alternate)`,
-			handler: (ctx) => void openSubagentWatch(ctx, index - 1),
+			handler: (ctx) => void openSubagentWatch(ctx, index),
 		});
 	}
 }
 
 /**
- * Open the watcher modal for the Nth most recent subagent run (0-based) of the
- * current pi session. Shows live status, elapsed time, last activity and the
- * tail of the run's output. Closes with q/esc.
+ * Open the watcher modal for a stable session number or run ID. Explicit run
+ * IDs are resolved within the current Pi session when one is available.
  */
 export async function openSubagentWatch(
 	ctx: ExtensionContext,
-	index: number,
+	target: number | string,
+): Promise<void> {
+	await openSubagentWatchTarget(ctx, target);
+}
+
+async function openLatestSubagentWatch(ctx: ExtensionContext): Promise<void> {
+	await openSubagentWatchTarget(ctx, LATEST_TARGET);
+}
+
+async function openSubagentWatchTarget(
+	ctx: ExtensionContext,
+	selector: number | string | typeof LATEST_TARGET,
 ): Promise<void> {
 	if (ctx.mode !== "tui" || !ctx.hasUI) {
 		ctx.ui.notify?.(
@@ -154,25 +167,70 @@ export async function openSubagentWatch(
 	}
 	const cwd = ctx.cwd;
 	const sessionId = currentSessionIdFromCtx(ctx);
-	let runs = await listSessionRuns(cwd, sessionId);
-	if (runs.length === 0 && sessionId !== undefined) {
+	const targetText = selector === LATEST_TARGET ? "" : String(selector);
+	const numericTarget =
+		selector === LATEST_TARGET
+			? null
+			: typeof selector === "number"
+				? selector
+				: /^[0-9]+$/.test(selector)
+					? Number(selector)
+					: null;
+	if (
+		numericTarget !== null &&
+		(!Number.isSafeInteger(numericTarget) || numericTarget < 1)
+	) {
+		ctx.ui.notify?.(
+			"Invalid subagent number. Use a positive session number or a run ID.",
+			"warning",
+		);
+		return;
+	}
+	if (numericTarget === null && selector !== LATEST_TARGET && !isSafeId(targetText)) {
+		ctx.ui.notify?.(
+			"Invalid subagent run ID. Use only letters, numbers, dots, underscores, or dashes.",
+			"warning",
+		);
+		return;
+	}
+	const explicitRunId = numericTarget === null && selector !== LATEST_TARGET;
+	let runs = await listSessionRuns(cwd, sessionId, "oldest");
+	if (runs.length === 0 && sessionId !== undefined && !explicitRunId) {
 		// A run can predate session metadata propagation or come from a host
 		// compatibility path. Fall back to cwd rather than making the shortcut
 		// appear dead.
-		runs = await listSessionRuns(cwd, undefined);
+		runs = await listSessionRuns(cwd, undefined, "oldest");
 	}
 	if (runs.length === 0) {
-		ctx.ui.notify?.("No subagent runs found in this workspace.", "info");
+		ctx.ui.notify?.(
+			explicitRunId
+				? `Subagent run ${targetText} was not found in this session.`
+				: "No subagent runs found in this workspace.",
+			explicitRunId ? "warning" : "info",
+		);
 		return;
 	}
-	if (index >= runs.length) {
+	const targetIndex =
+		selector === LATEST_TARGET
+			? runs.length - 1
+			: explicitRunId
+				? runs.findIndex((run) => run.runId === targetText)
+				: runs.findIndex(
+						(run, index) =>
+							run.sessionOrdinal === numericTarget ||
+							(run.sessionOrdinal === undefined && index + 1 === numericTarget),
+					);
+	if (targetIndex < 0) {
 		ctx.ui.notify?.(
-			`Only ${runs.length} subagent run${runs.length === 1 ? "" : "s"} in this session (${index + 1} requested).`,
+			explicitRunId
+				? `Subagent run ${targetText} was not found in this session.`
+				: `Subagent #${numericTarget} was not found in this session.`,
 			"info",
 		);
 		return;
 	}
-	const target = runs[index]!;
+	const target = runs[targetIndex]!;
+	const number = target.sessionOrdinal ?? targetIndex + 1;
 	await ctx.ui.custom<void>(
 		(tui: unknown, theme: unknown, _keybindings: unknown, done: () => void) =>
 			new SubagentWatch(
@@ -181,7 +239,7 @@ export async function openSubagentWatch(
 				tui as WatchTui & TUI,
 				done,
 				target,
-				index + 1,
+				number,
 			),
 		{
 			overlay: true,
@@ -208,34 +266,50 @@ export function currentSessionIdFromCtx(ctx: ExtensionContext): string | undefin
 	}
 }
 
-/** List runs in the current session (or cwd fallback), newest first. */
+export type SessionRunOrder = "newest" | "oldest";
+
+/** List runs in the current session (or cwd fallback), newest first by default. */
 export async function listSessionRuns(
 	cwd: string,
 	sessionId: string | undefined,
+	order: SessionRunOrder = "newest",
 ): Promise<WatchRun[]> {
 	const runsDir = join(cwd, RUNS_DIR);
 	const names = await readdir(runsDir, { withFileTypes: true }).catch(
 		() => [],
 	);
-	const dirs: Array<{ name: string; mtime: number }> = [];
+	const dirs: string[] = [];
 	for (const name of names) {
 		if (!name.isDirectory()) continue;
-		const info = await stat(join(runsDir, name.name)).catch(() => null);
-		if (info !== null) dirs.push({ name: name.name, mtime: info.mtimeMs });
+		dirs.push(name.name);
 	}
-	dirs.sort((a, b) => b.mtime - a.mtime);
 	const runs: WatchRun[] = [];
-	for (const dir of dirs.slice(0, 20)) {
-		const raw = await readJson(join(runsDir, dir.name, "run.json"));
+	for (const dir of dirs) {
+		const raw = await readJson(join(runsDir, dir, "run.json"));
 		if (raw === null || typeof raw !== "object") continue;
 		const record = raw as Record<string, unknown>;
 		if (typeof record.runId !== "string") continue;
 		if (sessionId !== undefined && record.parentSessionId !== sessionId)
 			continue;
-		const run = await loadRunProgress(cwd, record, dir.name);
-		if (run !== null) runs.push(run);
+		const run = await loadRunProgress(cwd, record, dir);
+		if (run !== null) {
+			// A persisted ordinal is meaningful only together with its parent session.
+			// The cwd compatibility fallback can contain several sessions that each
+			// legitimately have a #1.
+			if (sessionId === undefined) run.sessionOrdinal = undefined;
+			runs.push(run);
+		}
 	}
-	return runs;
+	runs.sort((a, b) => {
+		if (
+			a.sessionOrdinal !== undefined &&
+			b.sessionOrdinal !== undefined &&
+			a.sessionOrdinal !== b.sessionOrdinal
+		)
+			return a.sessionOrdinal - b.sessionOrdinal;
+		return a.startedAt - b.startedAt || a.runId.localeCompare(b.runId);
+	});
+	return order === "oldest" ? runs : runs.reverse();
 }
 
 async function readJson(file: string): Promise<unknown> {
@@ -286,6 +360,10 @@ async function loadRunProgress(
 			? []
 			: await readPiTranscript(
 					join(runDir, "attempts", latestAttemptId, "pi-events.jsonl"),
+					readLiveTranscriptEvents(
+						typeof record.runId === "string" ? record.runId : dir,
+						latestAttemptId,
+					),
 				);
 	if (transcript.length === 0) {
 		const herdrPaneId = readHerdrPaneId(record, latestAttemptId);
@@ -318,6 +396,12 @@ async function loadRunProgress(
 			typeof record.completedAt === "string"
 				? Date.parse(record.completedAt)
 				: null,
+		sessionOrdinal:
+			typeof record.sessionOrdinal === "number" &&
+			Number.isInteger(record.sessionOrdinal) &&
+			record.sessionOrdinal > 0
+				? record.sessionOrdinal
+				: undefined,
 	};
 }
 
@@ -325,19 +409,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object";
 }
 
-async function readPiTranscript(file: string): Promise<TranscriptItem[]> {
-	const text = await readFile(file, "utf8").catch(() => "");
-	if (text.length === 0) return [];
+async function readPiTranscript(
+	file: string,
+	liveEvents: Record<string, unknown>[] = [],
+): Promise<TranscriptItem[]> {
+	const persistedText =
+		liveEvents.length === 0 ? await readFile(file, "utf8").catch(() => "") : "";
+	if (liveEvents.length === 0 && persistedText.length === 0) return [];
 	const items: TranscriptItem[] = [];
 	const tools = new Map<string, TranscriptTool>();
-	for (const line of text.split(/\r?\n/)) {
-		if (line.length === 0) continue;
-		let event: Record<string, unknown>;
-		try {
-			event = JSON.parse(line) as Record<string, unknown>;
-		} catch {
-			continue;
-		}
+	const events =
+		liveEvents.length > 0
+			? liveEvents
+			: persistedText
+					.split(/\r?\n/)
+					.filter((line) => line.length > 0)
+					.flatMap((line) => {
+						try {
+							return [JSON.parse(line) as Record<string, unknown>];
+						} catch {
+							return [];
+						}
+					});
+	for (const event of events) {
 		if (
 			(event.type === "message_start" || event.type === "message_end") &&
 			isRecord(event.message) &&
@@ -775,18 +869,6 @@ export class SubagentWatch implements Component {
 				this.cwd,
 			);
 			component.markExecutionStarted();
-			if (item.result === undefined && item.updateCount > 0) {
-				const progress = item.progressChars > 0
-					? `${item.updateCount} update${item.updateCount === 1 ? "" : "s"} · ${item.progressChars.toLocaleString()} characters observed`
-					: `${item.updateCount} progress update${item.updateCount === 1 ? "" : "s"}`;
-				component.updateResult(
-					{
-						content: [{ type: "text", text: `Live output: ${progress} (content hidden).` }],
-						isError: false,
-					},
-					item.isPartial,
-				);
-			}
 			if (item.result !== undefined) {
 				const renderedResult =
 					isRecord(item.result) && Array.isArray(item.result.content)

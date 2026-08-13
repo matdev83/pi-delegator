@@ -22,10 +22,10 @@ import {
 	type ResolvedBackend,
 	type Status,
 } from "../core/constants.ts";
+import { assertSafeId } from "../core/identifiers.ts";
 import { resolveRunRef } from "./run-ref.ts";
 
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
-const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const EVENT_TAIL_LIMIT = 20;
 const CHILD_EVENT_SCAN_LIMIT = Number.POSITIVE_INFINITY;
 
@@ -126,17 +126,9 @@ export interface WaitForRunOptions extends RunStatusRef {
 
 export interface WaitForRunResult {
 	/** Wait operation status; `completed` means the wait reached any terminal run status. */
-	status: "completed" | "timeout";
-	outcome: "terminal" | "timeout";
+	status: "completed" | "timeout" | "not-found";
+	outcome: "terminal" | "timeout" | "not-found";
 	snapshot: RunStatusSnapshot | null;
-}
-
-function assertSafeId(name: string, value: string): void {
-	if (!SAFE_ID_PATTERN.test(value)) {
-		throw new Error(
-			`${name} must contain only letters, numbers, dots, underscores, or dashes.`,
-		);
-	}
 }
 
 function isInsideOrEqual(parent: string, child: string): boolean {
@@ -701,6 +693,10 @@ export async function waitForRun(
 	const pollIntervalMs = options.pollIntervalMs ?? 500;
 	const deadline = Date.now() + timeoutMs;
 	let snapshot = await getRunStatus(options);
+	if (snapshot === null)
+		return { status: "not-found", outcome: "not-found", snapshot: null };
+	if (isTerminalStatus(snapshot.status))
+		return { status: "completed", outcome: "terminal", snapshot };
 	while (Date.now() <= deadline) {
 		snapshot = await getRunStatus(options);
 		if (snapshot !== null && isTerminalStatus(snapshot.status))

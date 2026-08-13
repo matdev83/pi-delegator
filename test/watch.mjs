@@ -7,6 +7,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 
 const jiti = createJiti(import.meta.url, { interopDefault: false });
 const watch = await jiti.import("../src/watch.ts");
+const liveTranscript = await jiti.import("../src/live-transcript.ts");
 initTheme(undefined, false);
 
 const results = [];
@@ -30,6 +31,7 @@ writeFileSync(
 	JSON.stringify({
 		schemaVersion: 2, runId, mode: "single", status: "running",
 		backend: "herdr", parentSessionId: "session-abc", startedAt,
+		sessionOrdinal: 1,
 		updatedAt: new Date().toISOString(), completedAt: null,
 		latestAttemptId: attemptId, attempts: [],
 	}),
@@ -104,12 +106,18 @@ writeFileSync(
 		.map((event) => JSON.stringify(event))
 		.join("\n") + "\n",
 );
+for (const event of [
+	{ type: "message_start", message: { role: "assistant", content: [] } },
+	{ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Starting checks." } },
+	{ type: "tool_execution_start", toolCallId: "tool-live-1", toolName: "bash", args: { command: "npm test" } },
+	{ type: "tool_execution_update", toolCallId: "tool-live-1", toolName: "bash", partialResult: { content: [{ type: "text", text: "visible live test output" }] } },
+]) liveTranscript.publishLiveTranscriptEvent(runId, attemptId, event);
 await modal.refresh();
 const toolProgress = modal.render(80).join("\n");
 check("inline transcript shows assistant progress", toolProgress.includes("Starting checks."));
 check(
-	"inline transcript shows live tool progress",
-	toolProgress.includes("characters observed"),
+	"inline transcript shows native live tool output",
+	toolProgress.includes("visible live test output") && !toolProgress.includes("content hidden"),
 );
 
 modal.handleInput("q");
@@ -117,5 +125,45 @@ check("q closes modal", closed === true);
 
 // Cleanup the interval by disposing.
 modal.dispose();
+liveTranscript.resetLiveTranscripts();
+
+// Stable numbering is chronological and independent of directory mtimes or
+// completion order. The default listing remains newest-first for lifecycle API
+// compatibility, while the watcher requests oldest-first.
+for (const [number, offset] of [[2, 60_000], [3, 30_000]]) {
+	const numberedRunId = `run_watch_00${number}`;
+	const numberedAttemptId = `attempt_watch_00${number}`;
+	const numberedRunDir = join(runsDir, numberedRunId);
+	mkdirSync(join(numberedRunDir, "attempts", numberedAttemptId), { recursive: true });
+	writeFileSync(
+		join(numberedRunDir, "run.json"),
+		JSON.stringify({
+			schemaVersion: 2,
+			runId: numberedRunId,
+			mode: "single",
+			status: "completed",
+			backend: "headless",
+			parentSessionId: "session-abc",
+			sessionOrdinal: number,
+			startedAt: new Date(Date.now() - offset).toISOString(),
+			updatedAt: new Date().toISOString(),
+			completedAt: new Date().toISOString(),
+			latestAttemptId: numberedAttemptId,
+			attempts: [],
+		}),
+	);
+}
+const chronological = await watch.listSessionRuns(cwd, "session-abc", "oldest");
+check(
+	"oldest ordering follows stable session numbers",
+	JSON.stringify(chronological.map((run) => run.sessionOrdinal)) === "[1,2,3]",
+	JSON.stringify(chronological.map((run) => run.sessionOrdinal)),
+);
+const newest = await watch.listSessionRuns(cwd, "session-abc");
+check(
+	"default lifecycle ordering remains newest first",
+	JSON.stringify(newest.map((run) => run.sessionOrdinal)) === "[3,2,1]",
+	JSON.stringify(newest.map((run) => run.sessionOrdinal)),
+);
 console.log(`\n${results.filter(r => r.ok).length}/${results.length} passed`);
 process.exit(results.some(r => !r.ok) ? 1 : 0);

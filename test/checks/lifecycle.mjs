@@ -211,6 +211,21 @@ try {
 	assert.equal(waited.outcome, "terminal");
 	assert.equal(waited.snapshot?.durationMs, 1000);
 
+	const missingWaitStartedAt = Date.now();
+	const missingWait = await waitForSubagent({
+		cwd,
+		runId: "run_missing_wait",
+		timeoutMs: 60_000,
+		pollIntervalMs: 1_000,
+	});
+	assert.equal(missingWait.status, "not-found");
+	assert.equal(missingWait.outcome, "not-found");
+	assert.equal(missingWait.snapshot, null);
+	assert.ok(
+		Date.now() - missingWaitStartedAt < 1_000,
+		"wait for a missing run should return immediately",
+	);
+
 	const bogusRunDir = join(
 		cwd,
 		".pi/agent/runs/run_bogus_status/attempts/attempt_bogus",

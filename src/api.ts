@@ -16,6 +16,7 @@ import type {
 	ResolvedBackend,
 	Status,
 } from "./core/constants.ts";
+import { isSafeId } from "./core/identifiers.ts";
 import { resolveBackend } from "./core/resolver.ts";
 import { validateResolveInput } from "./core/validation.ts";
 import {
@@ -81,6 +82,23 @@ export class SubagentValidationError extends Error {
 		super(message);
 		this.name = "SubagentValidationError";
 		this.backend = backend;
+	}
+}
+
+function validateRunLookup(options: {
+	runId: string;
+	attemptId?: string;
+	taskId?: string;
+}): void {
+	for (const [name, value] of [
+		["runId", options.runId],
+		["attemptId", options.attemptId],
+		["taskId", options.taskId],
+	] as const) {
+		if (value !== undefined && !isSafeId(value))
+			throw new SubagentValidationError(
+				`${name} must contain only letters, numbers, dots, underscores, or dashes.`,
+			);
 	}
 }
 
@@ -266,30 +284,35 @@ export async function runSubagent(
 export async function getSubagentStatus(
 	options: GetSubagentStatusOptions,
 ): Promise<RunStatusSnapshot | null> {
+	validateRunLookup(options);
 	return await getRunStatus(options);
 }
 
 export async function getSubagentLogs(
 	options: GetSubagentLogsOptions,
 ): Promise<RunLogsSnapshot | null> {
+	validateRunLookup(options);
 	return await getRunLogs(options);
 }
 
 export async function waitForSubagent(
 	options: WaitForSubagentOptions,
 ): Promise<WaitForRunResult> {
+	validateRunLookup(options);
 	return await waitForRun(options);
 }
 
 export async function interruptSubagent(
 	options: InterruptSubagentOptions,
 ): Promise<InterruptRunResult> {
+	validateRunLookup(options);
 	return await interruptRun(options);
 }
 
 export async function reconcileSubagentRun(
 	options: ReconcileSubagentOptions,
 ): Promise<ReconcileSubagentRunResult> {
+	validateRunLookup(options);
 	return await reconcileRun(options);
 }
 
@@ -305,6 +328,7 @@ function defaultChildStatus(
 export async function recordSubagentChildEvent(
 	options: RecordSubagentChildEventOptions,
 ): Promise<RunEvent> {
+	validateRunLookup(options);
 	const {
 		event,
 		childRunId,

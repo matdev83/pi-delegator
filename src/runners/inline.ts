@@ -17,6 +17,7 @@ import {
 	type FailureKind,
 	type ThinkingLevel,
 } from "../core/constants.ts";
+import { publishLiveTranscriptEvent } from "../live-transcript.ts";
 import {
 	createLiveEventAppender,
 	detectContextLengthExceeded,
@@ -598,6 +599,7 @@ export async function runInlineModel(
 
 		const unsubscribe = session.subscribe?.((event) => {
 			toolCallTelemetry?.processEvent(event);
+			publishLiveTranscriptEvent(store.runId, store.attemptId, event);
 			liveEvents.append(event);
 			const delta = maybeTextDelta(event);
 			stdoutText += delta;

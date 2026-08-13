@@ -14,6 +14,10 @@ import {
 	buildPiArgv,
 	runHeadlessModel,
 } from "../../src/runners/headless-model.ts";
+import {
+	readLiveTranscriptEvents,
+	resetLiveTranscripts,
+} from "../../src/live-transcript.ts";
 
 function artifactByType(result, type) {
 	const artifact = result.artifacts.find(
@@ -159,6 +163,22 @@ process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "ass
 	assert.equal(eventsText.includes("result-body-secret"), false);
 	assert.equal(eventsText.includes("failed-update-secret"), false);
 	assert.equal(eventsText.includes("result-secret-redacted"), false);
+
+	const ephemeralEvents = readLiveTranscriptEvents(
+		"run_check_headless_streaming",
+		"attempt-streaming",
+	);
+	const ephemeralUpdate = ephemeralEvents.find(
+		(event) =>
+			event.type === "tool_execution_update" && event.toolCallId === "tool-1",
+	);
+	assert.equal(
+		JSON.stringify(ephemeralUpdate?.partialResult).includes(
+			"should-not-appear-update-secret",
+		),
+		true,
+		"native live tool output should remain available to the in-process watcher",
+	);
 
 	assert.equal(
 		result.artifacts.some((artifact) => artifact.type === "stdout"),
@@ -424,5 +444,6 @@ setInterval(() => undefined, 1000);
 		),
 	);
 } finally {
+	resetLiveTranscripts();
 	await rm(tempRoot, { recursive: true, force: true });
 }

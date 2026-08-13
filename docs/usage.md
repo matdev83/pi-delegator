@@ -80,7 +80,7 @@ TUI commands:
 /subagent enable
 /subagent disable
 /subagent panel
-/subagent watch [1-9]
+/subagent watch [number|runId]
 /subagent kill [runId|all]
 ```
 
@@ -100,7 +100,7 @@ Every call has an `action`. The default is `run`, so omitting `action` starts a 
 | `runs` | List recent run ids so callers can check status without guessing. | optional `scope` (`session` default / `cwd` / `all`), optional `limit` (default 10, max 50), optional `cwd` |
 | `status` | Read a run's current state. | `runId`, optional `cwd`, `attemptId` |
 | `logs` | Read a run's captured logs. | `runId`, optional `cwd`, `attemptId` |
-| `wait` | Block until a run finishes (internal default: 4h). | `runId`, optional `cwd`, `pollIntervalMs` |
+| `wait` | Block until a run finishes (internal default: 4h); missing runs return immediately with `status:"not-found"`. | `runId`, optional `cwd`, `pollIntervalMs` |
 | `interrupt` | Signal a process-backed run. | `runId`, optional `cwd`, `attemptId`, `signal`, `reason` |
 | `mark-background` | Mark a run as not needed before the final answer. | `runId`, optional `cwd` |
 | `reconcile` | Re-read durable artifacts and repair stale/orphaned state when possible. | `runId`, optional `cwd` |
@@ -289,7 +289,9 @@ Wait for completion:
 { "action": "wait", "runId": "run_...", "pollIntervalMs": 1000 }
 ```
 
-`wait` reports the wait operation status, not run success. `status:"completed"` with `outcome:"terminal"` means the target run reached any terminal state; inspect `snapshot.status` to distinguish `completed`, `failed`, and `cancelled` runs.
+`wait` reports the wait operation status, not run success. `status:"completed"` with `outcome:"terminal"` means the target run reached any terminal state; inspect `snapshot.status` to distinguish `completed`, `failed`, and `cancelled` runs. A missing run returns immediately with `status:"not-found"`, `outcome:"not-found"`, and `snapshot:null` instead of waiting for the timeout.
+
+Malformed run IDs are rejected as validation errors. Valid but nonexistent IDs return a structured `not-found` result for existing-run actions; `status` and `logs` include `snapshot:null`, while `wait` returns immediately rather than polling.
 
 Mark a run as background metadata:
 
@@ -574,14 +576,14 @@ Only runs in the tool call's working directory are considered, matched by start-
 
 ## Watching a run (keyboard shortcuts)
 
-Each subagent run in the current session can be watched in a modal overlay:
+Each subagent run in the current session can be watched in a modal overlay with `/subagent watch <number>` or `/subagent watch <runId>`:
 
 | Shortcut | Action |
 |---|---|
-| `Alt+Shift+1` … `Alt+Shift+9` | Open live progress of the 1st … 9th most recent run |
+| `Alt+Shift+1` … `Alt+Shift+9` | Open live progress for stable subagent `#1` … `#9` |
 | `Ctrl+Shift+1` … `Ctrl+Shift+9` | Same (alternate chord) |
 
-`Alt+Shift+1` is the most recently updated run, `Alt+Shift+2` the second-most-recent, and so on. The modal shows status, elapsed time, last activity, the task text, and a live tail of the run's output. `↑`/`↓`/`j`/`k` scroll the output; `q`/`esc` close it. The modal refreshes once per second while open.
+Subagent numbers are assigned monotonically within the Pi session: the first run is `#1`, the next is `#2`, and completed tool rows retain their number. `/subagent watch N` and the numbered shortcuts resolve that same stable number. `/subagent watch <runId>` resolves an exact run ID only within the current session. Malformed or missing targets produce a warning. `Ctrl+Shift+U` opens the latest run. The modal shows status, elapsed time, last activity, the task text, and a live tail of the run's output. `↑`/`↓`/`j`/`k` scroll the output; `q`/`esc` close it. The modal refreshes once per second while open.
 
 > **Terminal support**: plain `Ctrl+<digit>` is intentionally not used. On Windows it can be encoded inconsistently or collide with the host's interrupt/key handling. Try the `Ctrl+Shift+<digit>` alternate if your terminal does not report `Alt+Shift+<digit>`.
 
