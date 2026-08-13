@@ -51,6 +51,8 @@ interface TranscriptTool {
 	result?: unknown;
 	isError: boolean;
 	isPartial: boolean;
+	updateCount: number;
+	progressChars: number;
 }
 
 type TranscriptItem =
@@ -388,6 +390,8 @@ async function readPiTranscript(file: string): Promise<TranscriptItem[]> {
 				args: event.args ?? {},
 				isError: false,
 				isPartial: true,
+				updateCount: 0,
+				progressChars: 0,
 			};
 			tools.set(tool.toolCallId, tool);
 			items.push(tool);
@@ -399,6 +403,9 @@ async function readPiTranscript(file: string): Promise<TranscriptItem[]> {
 		) {
 			const tool = tools.get(event.toolCallId);
 			if (tool === undefined) continue;
+			if (event.type === "tool_execution_update") tool.updateCount += 1;
+			if (typeof event.progressChars === "number")
+				tool.progressChars = Math.max(tool.progressChars, event.progressChars);
 			tool.result =
 				event.type === "tool_execution_update" ? event.partialResult : event.result;
 			tool.isPartial = event.type === "tool_execution_update";
@@ -768,6 +775,18 @@ export class SubagentWatch implements Component {
 				this.cwd,
 			);
 			component.markExecutionStarted();
+			if (item.result === undefined && item.updateCount > 0) {
+				const progress = item.progressChars > 0
+					? `${item.updateCount} update${item.updateCount === 1 ? "" : "s"} · ${item.progressChars.toLocaleString()} characters observed`
+					: `${item.updateCount} progress update${item.updateCount === 1 ? "" : "s"}`;
+				component.updateResult(
+					{
+						content: [{ type: "text", text: `Live output: ${progress} (content hidden).` }],
+						isError: false,
+					},
+					item.isPartial,
+				);
+			}
 			if (item.result !== undefined) {
 				const renderedResult =
 					isRecord(item.result) && Array.isArray(item.result.content)

@@ -340,6 +340,26 @@ function sanitizeLiveEventString(value: string): string {
 	});
 }
 
+function livePayloadChars(
+	value: unknown,
+	seen = new Set<object>(),
+	depth = 0,
+): number {
+	if (typeof value === "string") return value.length;
+	if (value === null || typeof value !== "object" || depth >= 8) return 0;
+	if (seen.has(value)) return 0;
+	seen.add(value);
+	let chars = 0;
+	const values = Array.isArray(value)
+		? value
+		: Object.values(value as Record<string, unknown>);
+	for (const child of values.slice(0, 128)) {
+		chars += livePayloadChars(child, seen, depth + 1);
+		if (chars >= Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER;
+	}
+	return chars;
+}
+
 function pushParseError(parsed: PiJsonParseResult, message: string): void {
 	if (parsed.parseErrors.length < MAX_PARSE_ERRORS)
 		parsed.parseErrors.push(message);
@@ -537,6 +557,12 @@ function persistedLiveEvent(event: unknown): Record<string, unknown> | undefined
 		record.type === "tool_execution_update" ||
 		record.type === "tool_execution_end"
 	) {
+		const payload =
+			record.type === "tool_execution_update"
+				? record.partialResult
+				: record.type === "tool_execution_end"
+					? record.result
+					: undefined;
 		return {
 			type: record.type,
 			...(typeof record.toolCallId === "string"
@@ -548,6 +574,9 @@ function persistedLiveEvent(event: unknown): Record<string, unknown> | undefined
 			...(typeof record.isError === "boolean"
 				? { isError: record.isError }
 				: {}),
+			...(payload === undefined
+				? {}
+				: { progressChars: livePayloadChars(payload) }),
 		};
 	}
 
@@ -560,7 +589,7 @@ function persistedLiveEvent(event: unknown): Record<string, unknown> | undefined
 	return undefined;
 }
 
-function createLiveEventAppender(eventPath: string): {
+export function createLiveEventAppender(eventPath: string): {
 	append: (event: unknown) => void;
 	close: () => Promise<void>;
 } {

@@ -68,6 +68,11 @@ try {
   assert.match(output, /inline-model-ok/);
   assert.match(worker, /"backend": "inline"/);
   assert.match(worker, /"task": "Reply exactly: inline-model-ok"/);
+  const liveEvents = await readFile(
+    join(cwd, ".pi", "agent", "runs", result.runId, "attempts", result.attemptId, "pi-events.jsonl"),
+    "utf8",
+  );
+  assert.match(liveEvents, /"type":"message_update"/);
 
   console.log(
     JSON.stringify(

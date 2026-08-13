@@ -148,6 +148,8 @@ process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "ass
 	assert.equal("args" in (retainedToolStart ?? {}), false);
 	assert.equal("partialResult" in (retainedToolUpdate ?? {}), false);
 	assert.equal("result" in (retainedToolEnd ?? {}), false);
+	assert.equal(typeof retainedToolUpdate?.progressChars, "number");
+	assert.equal(typeof retainedToolEnd?.progressChars, "number");
 	assert.ok(eventsText.length < 256 * 1024, "live event transcript should be bounded");
 	assert.equal(eventsText.includes("secret-token"), false);
 	assert.equal(eventsText.includes("cookie-secret"), false);

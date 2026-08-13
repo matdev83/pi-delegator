@@ -17,7 +17,10 @@ import {
 	type FailureKind,
 	type ThinkingLevel,
 } from "../core/constants.ts";
-import { detectContextLengthExceeded } from "./headless-model.ts";
+import {
+	createLiveEventAppender,
+	detectContextLengthExceeded,
+} from "./headless-model.ts";
 import {
 	flushToolCallTelemetry,
 	ToolCallTelemetryCollector,
@@ -528,6 +531,9 @@ export async function runInlineModel(
 		Buffer.byteLength(workerPayload, "utf8"),
 	);
 	const liveOutput = createLiveOutputWriter(store);
+	const liveEvents = createLiveEventAppender(
+		join(store.attemptDir, "pi-events.jsonl"),
+	);
 
 	let stdoutText = "";
 	let stderrText = "";
@@ -592,6 +598,7 @@ export async function runInlineModel(
 
 		const unsubscribe = session.subscribe?.((event) => {
 			toolCallTelemetry?.processEvent(event);
+			liveEvents.append(event);
 			const delta = maybeTextDelta(event);
 			stdoutText += delta;
 			liveOutput.append(delta);
@@ -622,6 +629,7 @@ export async function runInlineModel(
 		stderrText += `${error instanceof Error ? error.message : String(error)}\n`;
 	}
 	await liveOutput.close();
+	await liveEvents.close();
 
 	if (failureKind === null && outputText.length === 0) {
 		failureKind = "model";
