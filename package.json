@@ -13,7 +13,10 @@
     "sandbox",
     "windows"
   ],
-  "author": "Mateusz (matdev83)",
+  "author": {
+    "name": "matdev83",
+    "email": "github@matdev83.anonaddy.com"
+  },
   "license": "MIT",
   "publishConfig": {
     "access": "public"

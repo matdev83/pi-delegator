@@ -194,4 +194,4 @@ const status = await getSubagentStatus({ runId: run.runId });
 
 ## Attribution
 
-`pi-delegator` contains software originally developed for [`@agwab/pi-subagent`](https://github.com/AgwaB/pi-subagent) by AgwaB and distributed under the MIT License. The original copyright and license notice are retained in [LICENSE](./LICENSE). Subsequent cross-platform, lifecycle, observability, backend, and UX work is maintained independently by Mateusz (`matdev83`).
+`pi-delegator` contains software originally developed for [`@agwab/pi-subagent`](https://github.com/AgwaB/pi-subagent) by AgwaB and distributed under the MIT License. The original copyright and license notice are retained in [LICENSE](./LICENSE). Subsequent cross-platform, lifecycle, observability, backend, and UX work is maintained independently by `matdev83`.
