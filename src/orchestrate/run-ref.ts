@@ -2,13 +2,13 @@ import {
 	mkdir,
 	readdir,
 	readFile,
-	rename,
 	stat,
 	unlink,
 	writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { renameWithRetry } from "../core/atomic-file.ts";
 import { readDelegatorEnv } from "../core/env.ts";
 
 const DEFAULT_RUNS_DIR = ".pi/agent/runs";
@@ -174,7 +174,7 @@ export async function writeRunLocator(
 	await mkdir(dirname(path), { recursive: true });
 	const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
 	await writeFile(tempPath, `${JSON.stringify(locator, null, 2)}\n`);
-	await rename(tempPath, path);
+	await renameWithRetry(tempPath, path);
 }
 
 export async function readRunLocator(

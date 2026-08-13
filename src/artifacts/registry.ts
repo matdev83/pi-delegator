@@ -3,12 +3,12 @@ import {
 	mkdir,
 	open,
 	readFile,
-	rename,
 	rm,
 	stat,
 	writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { renameWithRetry } from "../core/atomic-file.ts";
 import type {
 	AsyncDependency,
 	ExecutionMode,
@@ -458,7 +458,7 @@ async function writeRecordPath(
 	await mkdir(dirname(path), { recursive: true });
 	const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
 	await writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`);
-	await rename(tempPath, path);
+	await renameWithRetry(tempPath, path);
 	return record;
 }
 
