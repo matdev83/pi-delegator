@@ -32,7 +32,7 @@ const PARSED_EVENT_PATTERN =
 	/"type"\s*:\s*"(?:message_end|turn_end|agent_end|error)"/;
 const STREAM_EVENT_PATTERN =
 	/"type"\s*:\s*"(?:message_start|message_update|tool_execution_start|tool_execution_update|tool_execution_end)"/;
-const MAX_PARSE_ERRORS = 20;
+export const MAX_PARSE_ERRORS = 20;
 const MAX_JSON_LINE_CHARS = 64 * 1024 * 1024;
 
 export function detectContextLengthExceeded(signals: {
@@ -104,18 +104,25 @@ function errorText(value: unknown): string | undefined {
 	return undefined;
 }
 
-function sumUsageValues(total: unknown, next: unknown): unknown {
+const MAX_USAGE_DEPTH = 8;
+
+function sumUsageValues(total: unknown, next: unknown, depth = 0): unknown {
 	if (typeof next === "number") {
 		if (!Number.isFinite(next)) return total;
 		return typeof total === "number" ? total + next : next;
 	}
-	if (typeof next === "object" && next !== null && !Array.isArray(next)) {
+	if (
+		typeof next === "object" &&
+		next !== null &&
+		!Array.isArray(next) &&
+		depth < MAX_USAGE_DEPTH
+	) {
 		const base: Record<string, unknown> =
 			typeof total === "object" && total !== null && !Array.isArray(total)
 				? { ...(total as Record<string, unknown>) }
 				: {};
 		for (const [key, value] of Object.entries(next)) {
-			const merged = sumUsageValues(base[key], value);
+			const merged = sumUsageValues(base[key], value, depth + 1);
 			if (merged !== undefined) base[key] = merged;
 		}
 		return base;

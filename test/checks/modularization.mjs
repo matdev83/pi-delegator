@@ -32,6 +32,20 @@ const parser = new PiJsonStreamParser();
 parser.push('{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hello world"}]}}\n');
 assert.equal(parser.parsed.finalAssistantText, "hello world", "PiJsonStreamParser parses assistant message end event");
 
+// Deeply nested usage objects come from untrusted child-process stdout and
+// must not overflow the stack when accumulated (livePayloadChars bounds depth
+// the same way; a RangeError here would escape parser.push entirely).
+const deepNestedUsage = '{"a":'.repeat(10000) + "1" + "}".repeat(10000);
+const deepParser = new PiJsonStreamParser();
+deepParser.push(
+	`{"type":"message_end","message":{"role":"assistant","content":[],"usage":${deepNestedUsage}}}\n`,
+);
+assert.equal(
+	typeof deepParser.parsed.metadata.usage,
+	"object",
+	"deep usage accumulates without stack overflow",
+);
+
 // ---- 4. Presumptive blockers: file-size limits ----
 // The thermonuclear review blocks any PR that keeps the decomposed entry
 // points over 1,000 lines (index.ts is stricter: pure extension bootstrap).
@@ -77,6 +91,18 @@ for (const rel of ["src/panel.ts", "src/watch.ts"]) {
 // Each decomposed entry point must delegate to the module the review plan
 // extracted. If an implementation is inlined back into an entry point, this
 // contract fails and forces a new extraction instead of file sprawl.
+// Imports are parsed from import declarations so comments or string literals
+// cannot satisfy the contract.
+function importSpecifiers(source) {
+	const specifiers = [];
+	for (const match of source.matchAll(
+		/import\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/g,
+	)) {
+		specifiers.push(match[1]);
+	}
+	return specifiers;
+}
+
 const contracts = [
 	["src/index.ts", ["./core/components.ts", "./orchestrate/tool-executor.ts"]],
 	[
@@ -91,9 +117,10 @@ const contracts = [
 ];
 for (const [rel, deps] of contracts) {
 	const src = await readFile(new URL(`../../${rel}`, import.meta.url), "utf8");
+	const specifiers = importSpecifiers(src);
 	for (const dep of deps) {
 		assert.ok(
-			src.includes(`from "${dep}"`),
+			specifiers.includes(dep),
 			`${rel} must import ${dep} (module contract for decomposition)`,
 		);
 	}

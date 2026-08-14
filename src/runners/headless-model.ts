@@ -14,6 +14,7 @@ import {
 	livePayloadChars,
 	toBuffer,
 	emptyParseResult,
+	MAX_PARSE_ERRORS,
 	type PiJsonParseResult,
 	type PiUsageAccumulationSlot,
 	type PiUsageAccumulation,
@@ -26,7 +27,6 @@ export {
 } from "./stream-parser.ts";
 export { buildPiArgv, toolResultBudgetExtensionPath } from "./argv-builder.ts";
 
-const MAX_METADATA_ERRORS = 20;
 const STDERR_TEXT_LIMIT = 256 * 1024;
 const LIVE_EVENT_MAX_BYTES = 4 * 1024 * 1024;
 const LIVE_EVENT_MAX_LINE_BYTES = 64 * 1024;
@@ -367,21 +367,21 @@ export function resultMetadataFromParse(
 			: {}),
 		...(parsed.errors.length === 0
 			? {}
-			: { streamErrors: parsed.errors.slice(0, MAX_METADATA_ERRORS) }),
+			: { streamErrors: parsed.errors.slice(0, MAX_PARSE_ERRORS) }),
 		...(outcome.status === "completed" && parsed.errors.length > 0
-			? { nonFatalStreamErrors: parsed.errors.slice(0, MAX_METADATA_ERRORS) }
+			? { nonFatalStreamErrors: parsed.errors.slice(0, MAX_PARSE_ERRORS) }
 			: {}),
 		...(contextLength.recoveredStreamErrors.length === 0
 			? {}
 			: {
 					recoveredStreamErrors: contextLength.recoveredStreamErrors.slice(
 						0,
-						MAX_METADATA_ERRORS,
+						MAX_PARSE_ERRORS,
 					),
 				}),
 		...(parsed.parseErrors.length === 0
 			? {}
-			: { parseErrors: parsed.parseErrors.slice(0, MAX_METADATA_ERRORS) }),
+			: { parseErrors: parsed.parseErrors.slice(0, MAX_PARSE_ERRORS) }),
 	};
 }
 
