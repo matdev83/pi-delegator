@@ -4,7 +4,7 @@ import { getProgress } from "../live-progress.ts";
 import { interruptRun } from "./interrupt.ts";
 import { listRunLocators, resolveRunRef } from "./run-ref.ts";
 import { isSafeId } from "../core/identifiers.ts";
-import { isRecord, TOOL_NAME } from "./tool-executor.ts";
+import { isRecord, TOOL_NAME } from "./tool-contract.ts";
 import { currentSessionIdFromCtx, listSessionRuns } from "../watch.ts";
 
 async function activeSessionRuns(

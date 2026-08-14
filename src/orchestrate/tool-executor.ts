@@ -82,7 +82,8 @@ import {
 	resetWidgetOrdinals,
 	widgetOrdinalFor,
 } from "../core/components.ts";
-import { lifecycleAction, InputValidationError, type ToolResult } from "./lifecycle.ts";
+import { lifecycleAction, InputValidationError } from "./lifecycle.ts";
+import { TOOL_NAME, isRecord, textResult, type ToolTextContent } from "./tool-contract.ts";
 import {
 	OUTPUT_PREVIEW_MAX_BYTES,
 	OUTPUT_PREVIEW_TOTAL_MAX_BYTES,
@@ -90,13 +91,10 @@ import {
 	type OutputPreview,
 } from "../output-preview.ts";
 import {
-	textResult,
 	resultSummary,
 	artifactSummary,
 	compactResult,
 	compactResults,
-	addOutputPreview,
-	displayText,
 	subagentCallSummary,
 	validationFailure,
 	executionMode,
@@ -104,11 +102,13 @@ import {
 	writeUnsupportedResult,
 	isRunAction,
 	isLogsAction,
+	agentRequests,
+} from "./result-compact.ts";
+import type {
 	ToolUpdateCallback,
 	NotificationContext,
 	ProjectAgentApprovalContext,
 	AgentRequest,
-	agentRequests,
 } from "./result-compact.ts";
 import {
 	activeSessionRuns,
@@ -117,56 +117,6 @@ import {
 	handleKillCommand,
 } from "./kill-orchestrator.ts";
 
-export const TOOL_NAME = "subagent";
-export const AGENT_TASK_KEYS = [
-	"agent",
-	"task",
-	"roleContext",
-	"agentScope",
-	"confirmProjectAgents",
-];
-export const SUPPORTED_KEYS = new Set([
-	"backend",
-	"visible",
-	"sandbox",
-	"agent",
-	"task",
-	"roleContext",
-	"agentScope",
-	"confirmProjectAgents",
-	"mode",
-	"tasks",
-	"concurrency",
-	"failFast",
-	"cancelSiblingsOnFailure",
-	"asyncDependency",
-	"workspace",
-	"worktree",
-	"worktreePolicy",
-	"cwd",
-	"async",
-	"onComplete",
-	"model",
-	"tools",
-	"systemPrompt",
-	"skills",
-	"extensions",
-	"runsDir",
-	"correlationId",
-	"captureToolCalls",
-	"thinking",
-	"thinkingLevel",
-	"reasoningLevel",
-	"action",
-	"runId",
-	"attemptId",
-	"taskId",
-	"pollIntervalMs",
-	"reason",
-	"signal",
-	"scope",
-	"limit",
-]);
 const SANDBOX_SCHEMA = Type.Union(
 	[
 		Type.Boolean(),
@@ -212,11 +162,6 @@ const SUBAGENT_TASK_SCHEMA = Type.Object({
 	),
 });
 
-interface ToolTextContent {
-	type: "text";
-	text: string;
-}
-
 interface ToolResultEnvelopeContent {
 	type: "result_envelope";
 	resultEnvelope: ResultEnvelope;
@@ -230,21 +175,6 @@ interface ToolResultDetails {
 		outcome: string;
 		snapshot: string[];
 	};
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function hasAnyKey(
-	input: Record<string, unknown>,
-	keys: readonly string[],
-): boolean {
-	return keys.some((key) => Object.hasOwn(input, key));
-}
-
-export function formatKeyList(keys: readonly string[]): string {
-	return keys.map((key) => `"${key}"`).join(", ");
 }
 
 function getExecuteParams(first: unknown, second: unknown): unknown {
@@ -893,13 +823,10 @@ export function buildSubagentToolDefinition(
 
 
 export {
-	textResult,
 	resultSummary,
 	artifactSummary,
 	compactResult,
 	compactResults,
-	addOutputPreview,
-	displayText,
 	subagentCallSummary,
 	validationFailure,
 	executionMode,
@@ -907,12 +834,21 @@ export {
 	writeUnsupportedResult,
 	isRunAction,
 	isLogsAction,
+	agentRequests,
+} from "./result-compact.ts";
+export type {
 	ToolUpdateCallback,
 	NotificationContext,
 	ProjectAgentApprovalContext,
 	AgentRequest,
-	agentRequests,
 } from "./result-compact.ts";
+export {
+	TOOL_NAME,
+	isRecord,
+	textResult,
+	displayText,
+	addOutputPreview,
+} from "./tool-contract.ts";
 export {
 	activeSessionRuns,
 	killSubagent,

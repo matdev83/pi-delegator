@@ -2,7 +2,6 @@ import { resolve } from "node:path";
 import { Type } from "typebox";
 import type { ArtifactRef, ResultEnvelope } from "../artifacts/index.ts";
 import { createAttemptArtifactStore, readRunRecord } from "../artifacts/index.ts";
-import type { ToolResult } from "./lifecycle.ts";
 import type {
 	ResolveInput,
 	ResolveValidationFailure,
@@ -11,13 +10,20 @@ import type {
 } from "../core/constants.ts";
 import { clip, visibleLength } from "../core/text-width.ts";
 import { readOutputPreview, OUTPUT_PREVIEW_MAX_BYTES, OUTPUT_PREVIEW_TOTAL_MAX_BYTES, type OutputPreview } from "../output-preview.ts";
-import { isRecord, formatKeyList, TOOL_NAME, SUPPORTED_KEYS, hasAnyKey, AGENT_TASK_KEYS } from "./tool-executor.ts";
+import {
+	isRecord,
+	formatKeyList,
+	TOOL_NAME,
+	SUPPORTED_KEYS,
+	hasAnyKey,
+	AGENT_TASK_KEYS,
+	textResult,
+	displayText,
+	addOutputPreview,
+	type ToolTextContent,
+	type ToolResult,
+} from "./tool-contract.ts";
 import { loadAgentByName, type AgentDefinition } from "../agents.ts";
-
-interface ToolTextContent {
-	type: "text";
-	text: string;
-}
 
 interface ToolResultDetails {
 	resolved?: ResolvedBackend;
@@ -26,18 +32,6 @@ interface ToolResultDetails {
 		status: string;
 		outcome: string;
 		snapshot: string[];
-	};
-}
-
-function textResult(
-	payload: unknown,
-	isError: boolean,
-	details?: unknown,
-): ToolResult {
-	return {
-		content: [{ type: "text", text: JSON.stringify(payload) }],
-		details,
-		isError,
 	};
 }
 
@@ -115,26 +109,6 @@ async function compactResults(results: readonly ResultEnvelope[]) {
 		compacted.push(item);
 	}
 	return compacted;
-}
-
-async function addOutputPreview<T extends { logs?: readonly { type: string; path: string; artifactCwd?: string }[]; }>(
-	snapshot: T | null,
-): Promise<(T & Partial<OutputPreview>) | null> {
-	if (snapshot === null) return null;
-	const preview = await readOutputPreview(
-		snapshot.logs?.find((log) => log.artifactCwd)?.artifactCwd ?? process.cwd(),
-		snapshot.logs ?? [],
-	);
-	return preview === undefined ? snapshot : { ...snapshot, ...preview };
-}
-
-function displayText(value: unknown, maxLength: number): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const normalized = value.replace(/\s+/g, " ").trim();
-	if (!normalized) return undefined;
-	return normalized.length <= maxLength
-		? normalized
-		: `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 function subagentCallSummary(input: unknown): string {
@@ -322,13 +296,10 @@ function agentRequests(input: ResolveInput): AgentRequest[] {
 
 
 export {
-	textResult,
 	resultSummary,
 	artifactSummary,
 	compactResult,
 	compactResults,
-	addOutputPreview,
-	displayText,
 	subagentCallSummary,
 	isRunAction,
 	isLogsAction,
@@ -336,9 +307,11 @@ export {
 	executionMode,
 	unsupportedPathError,
 	writeUnsupportedResult,
+	agentRequests,
+};
+export type {
 	ToolUpdateCallback,
 	NotificationContext,
 	ProjectAgentApprovalContext,
 	AgentRequest,
-	agentRequests,
 };

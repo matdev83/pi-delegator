@@ -6,48 +6,10 @@ import { readRunRecord, setRunDependency, appendRunEvent } from "../artifacts/in
 import { interruptRun } from "./interrupt.ts";
 import { reconcileSubagentRun } from "./reconcile.ts";
 import { isSafeId } from "../core/identifiers.ts";
-import { OUTPUT_PREVIEW_MAX_BYTES, readOutputPreview, type OutputPreview } from "../output-preview.ts";
-
-const TOOL_NAME = "subagent";
-
-export interface ToolTextContent {
-	type: "text";
-	text: string;
-}
-
-export interface ToolResult {
-	content: ToolTextContent[];
-	details: unknown;
-	isError: boolean;
-}
+import { TOOL_NAME, textResult, addOutputPreview, type ToolResult } from "./tool-contract.ts";
 
 export class InputValidationError extends Error {
 	readonly failureKind = "validation" as const;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function textResult(
-	payload: unknown,
-	isError: boolean,
-	details?: unknown,
-): ToolResult {
-	return {
-		content: [{ type: "text", text: JSON.stringify(payload) }],
-		details,
-		isError,
-	};
-}
-
-function displayText(value: unknown, maxLength: number): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const normalized = value.replace(/\s+/g, " ").trim();
-	if (!normalized) return undefined;
-	return normalized.length <= maxLength
-		? normalized
-		: `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 function optionalString(value: unknown, fieldName: string): string | undefined {
@@ -69,17 +31,6 @@ function optionalPositiveNumber(
 			`${fieldName} must be a positive finite number when provided.`,
 		);
 	return value;
-}
-
-async function addOutputPreview<T extends { logs?: readonly { type: string; path: string; artifactCwd?: string }[]; }>(
-	snapshot: T | null,
-): Promise<(T & Partial<OutputPreview>) | null> {
-	if (snapshot === null) return null;
-	const preview = await readOutputPreview(
-		snapshot.logs?.find((log) => log.artifactCwd)?.artifactCwd ?? process.cwd(),
-		snapshot.logs ?? [],
-	);
-	return preview === undefined ? snapshot : { ...snapshot, ...preview };
 }
 
 export async function lifecycleAction(

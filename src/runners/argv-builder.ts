@@ -64,7 +64,7 @@ export function resolvePiCliFromPath(): string | undefined {
 		const found = execFileSync(
 			process.platform === "win32" ? "where" : "which",
 			["pi"],
-			{ encoding: "utf8" },
+			{ encoding: "utf8", timeout: 2_000 },
 		)
 			.trim()
 			.split(/\r?\n/)[0];
