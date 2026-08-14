@@ -436,6 +436,52 @@ setInterval(() => undefined, 1000);
 	assert.equal(aborted.status, "cancelled");
 	assert.equal(aborted.failureKind, "abort");
 
+	const idlePi = join(tempRoot, "fake-pi-idle.mjs");
+	await writeFile(
+		idlePi,
+		`#!/usr/bin/env node
+setInterval(() => undefined, 1000);
+`,
+		"utf8",
+	);
+	await chmod(idlePi, 0o700);
+	const inactive = await runHeadlessModel({
+		cwd,
+		runId: "run_check_headless_inactivity",
+		attemptId: "attempt-inactivity",
+		piCommand: idlePi,
+		agent: "idle-worker",
+		task: "stay idle until the inactivity guard fires",
+		timeoutMs: 5_000,
+		inactivityTimeoutMs: 100,
+	});
+	assert.equal(inactive.status, "failed");
+	assert.equal(inactive.failureKind, "timeout");
+
+	const delayedPi = join(tempRoot, "fake-pi-delayed.mjs");
+	await writeFile(
+		delayedPi,
+		`#!/usr/bin/env node
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "opt-out-ok" }], provider: "fake", model: "fake/model", stopReason: "stop" } }) + "\\n");
+}, 180);
+`,
+		"utf8",
+	);
+	await chmod(delayedPi, 0o700);
+	const optedOut = await runHeadlessModel({
+		cwd,
+		runId: "run_check_headless_inactivity_disabled",
+		attemptId: "attempt-inactivity-disabled",
+		piCommand: delayedPi,
+		agent: "delayed-worker",
+		task: "finish after the disabled inactivity guard window",
+		timeoutMs: 2_000,
+		inactivityTimeoutMs: 0,
+	});
+	assert.equal(optedOut.status, "completed");
+	assert.equal(optedOut.failureKind, null);
+
 	console.log(
 		JSON.stringify(
 			{ name: "check-headless-streaming", status: "completed" },

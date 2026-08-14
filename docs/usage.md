@@ -322,7 +322,8 @@ The locator index is only a pointer for finding runs across cwd boundaries. `run
 | Option | Use |
 |---|---|
 | `cwd` | Run from a specific project directory. Existing-run actions accept `cwd` to force a registry location; if omitted, recent runs can be found by global locator and older runs fall back to the current cwd. |
-The `subagent` tool deliberately does not expose a `timeoutMs` parameter. Runs are not time-limited by the tool; subagents are expected to finish on their own, and `action:"wait"` polls internally with a 4-hour default deadline. Orchestrators using the code API can still pass `timeoutMs` explicitly on runs and waits if they need a shorter SLA.
+| `inactivityTimeoutSeconds` | Idle-run guard for synchronous and worker-backed runs. Defaults to 900 seconds (15 minutes) and resets on transcript/output/tool/process activity. Set to `0` to disable it. This is separate from the optional code-API `timeoutMs` session limit. |
+The `subagent` tool deliberately does not expose a general `timeoutMs` parameter. `action:"wait"` still polls internally with a 4-hour default deadline. Orchestrators using the code API can pass `timeoutMs` explicitly on runs and waits if they need a shorter overall SLA; `inactivityTimeoutSeconds` remains the activity-based guard.
 
 Completed runs include a bounded `output` preview containing the final assistant response. The complete response remains in the run's `output.log` artifact; `outputTruncated: true` means that artifact must be read for the full text. Stderr, reasoning, event streams, and tool payloads are not embedded in the preview. Detached runs expose the preview through completion notification or a later terminal `wait`/`status` result.
 | `visible` | Use a visible worker (`visible: true`): tmux on Linux/macOS, or pair with `backend: "herdr"` on Windows. |

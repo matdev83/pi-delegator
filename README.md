@@ -213,6 +213,11 @@ Existing run:
 
 Recent runs can be addressed by `runId` even when they were launched from another cwd; legacy records still resolve from the explicit or current cwd.
 
+Runs have a 15-minute inactivity guard by default. It resets when the worker
+produces transcript, tool, output, or process activity. Set
+`inactivityTimeoutSeconds: 0` to opt out; this is independent of the code API's
+optional general `timeoutMs` limit.
+
 ### Panel
 
 Inspect runs, attempts, artifacts, and log tails in a live TUI. The panel defaults to the current Pi session, can switch to current cwd or all indexed runs, and includes status filters plus a scrollable detail pane. It shows active and recent terminal runs by default, with in-panel `m` to show more, and counts stale/malformed run pointers without exposing raw session ids.

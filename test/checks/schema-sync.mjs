@@ -47,6 +47,7 @@ const probeValues = {
 	async: true,
 	onComplete: "return",
 	timeoutMs: 1000,
+	inactivityTimeoutSeconds: 0,
 	model: "provider/model",
 	tools: ["read"],
 	systemPrompt: "prompt",
@@ -71,8 +72,8 @@ const lifecycleKeys = new Set([
 	"limit",
 ]);
 
-// Timeout controls must not be exposed to the LLM; runs are expected to finish
-// on their own and the internal wait default is a long 4h deadline.
+// The general code-API timeout remains hidden from the LLM. Inactivity is a
+// separate, LLM-configurable guard and accepts 0 to opt out.
 for (const hidden of ["timeoutMs", "escalateAfterMs", "killAfterMs"]) {
 	assert.equal(
 		schemaKeys.includes(hidden),
@@ -112,10 +113,18 @@ assert.ok(
 	"task schema exposes captureToolCalls",
 );
 const taskLevel = validateResolveInput({
-	tasks: [{ agent: "worker", task: "inspect", captureToolCalls: true }],
+	tasks: [
+		{
+			agent: "worker",
+			task: "inspect",
+			captureToolCalls: true,
+			inactivityTimeoutSeconds: 0,
+		},
+	],
 });
 assert.equal(taskLevel.ok, true);
 assert.equal(taskLevel.input.tasks[0].captureToolCalls, true);
+assert.equal(taskLevel.input.tasks[0].inactivityTimeoutSeconds, 0);
 
 console.log(
 	JSON.stringify(

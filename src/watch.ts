@@ -33,7 +33,13 @@ const RUNS_DIR = ".pi/agent/runs";
 const TAIL_LINES = 24;
 const execFileAsync = promisify(execFile);
 const TAIL_BYTES = 16_384;
-const PROGRESS_FILES = ["pi-events.jsonl", "output.log", "stderr.log", "result.json"];
+const PROGRESS_FILES = [
+	"pi-events.jsonl",
+	"output.log",
+	"stderr.log",
+	"result.json",
+	"activity.timestamp",
+];
 const LATEST_TARGET = Symbol("latest-subagent");
 
 interface WatchTheme {

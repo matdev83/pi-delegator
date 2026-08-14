@@ -21,6 +21,7 @@ import type {
 	ResolvedBackend,
 	SubagentTaskInput,
 } from "../core/constants.ts";
+import { inactivityTimeoutMsFromSeconds } from "../core/constants.ts";
 import { resolveBackend } from "../core/resolver.ts";
 import { runHeadlessModel } from "../runners/headless-model.ts";
 import { runHerdrModel } from "../runners/herdr.ts";
@@ -264,6 +265,7 @@ export async function runSubagentTask(
 			},
 		],
 	});
+	let result: ResultEnvelope | undefined;
 	try {
 		await options.onRunStarted?.({ runId, attemptId, cwd: baseCwd, startedAt });
 	} catch {
@@ -324,6 +326,9 @@ export async function runSubagentTask(
 			artifactCwd: baseCwd,
 			signal: options.signal,
 			timeoutMs: input.timeoutMs,
+			inactivityTimeoutMs: inactivityTimeoutMsFromSeconds(
+				input.inactivityTimeoutSeconds,
+			),
 			sandbox: input.sandbox,
 			runId,
 			attemptId,
@@ -354,7 +359,7 @@ export async function runSubagentTask(
 			sessionId: input.sessionId,
 			agentDefinition,
 		};
-		let result: ResultEnvelope =
+		result =
 			backend === "tmux"
 				? await runTmuxModel(modelOptions)
 				: backend === "herdr"
@@ -383,7 +388,7 @@ export async function runSubagentTask(
 					signal: result.signal,
 				},
 			},
-		);
+		).catch(() => undefined);
 		await appendRunEvent(
 			{ ...runRef },
 			{
@@ -396,9 +401,16 @@ export async function runSubagentTask(
 				status: result.status,
 				message: `run ${result.status}`,
 			},
-		);
+		).catch(() => undefined);
 		return result;
 	} catch (error) {
+		// Once the backend has produced a terminal envelope, registry/event
+		// bookkeeping failures must not turn a finished worker into a new
+		// internal failure or keep a synchronous tool call in the error path.
+		if (result !== undefined) {
+			await finishAttemptFromResult(runRef, result).catch(() => undefined);
+			return result;
+		}
 		const message = error instanceof Error ? error.message : String(error);
 		await upsertRunAttempt({
 			...runRef,

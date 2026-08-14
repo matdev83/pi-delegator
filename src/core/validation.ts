@@ -121,6 +121,19 @@ function validateTimeoutMs(
 	return value;
 }
 
+function validateInactivityTimeoutSeconds(
+	value: unknown,
+	backend: ResolvedBackend | undefined,
+): number | ResolveValidationResult {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+		return failure(
+			"inactivityTimeoutSeconds must be a non-negative finite number when provided.",
+			backend,
+		);
+	}
+	return value;
+}
+
 function validateConcurrency(
 	value: unknown,
 	backend: ResolvedBackend | undefined,
@@ -336,6 +349,16 @@ function validateTaskItem(
 		const timeoutMs = validateTimeoutMs(value.timeoutMs, backend);
 		if (typeof timeoutMs !== "number") return timeoutMs;
 		task.timeoutMs = timeoutMs;
+	}
+
+	if (value.inactivityTimeoutSeconds !== undefined) {
+		const inactivityTimeoutSeconds = validateInactivityTimeoutSeconds(
+			value.inactivityTimeoutSeconds,
+			backend,
+		);
+		if (typeof inactivityTimeoutSeconds !== "number")
+			return inactivityTimeoutSeconds;
+		task.inactivityTimeoutSeconds = inactivityTimeoutSeconds;
 	}
 
 	if (value.model !== undefined) {
@@ -718,6 +741,16 @@ export function validateResolveInput(
 		const timeoutMs = validateTimeoutMs(raw.timeoutMs, backendForKnownFailure);
 		if (typeof timeoutMs !== "number") return timeoutMs;
 		input.timeoutMs = timeoutMs;
+	}
+
+	if (raw.inactivityTimeoutSeconds !== undefined) {
+		const inactivityTimeoutSeconds = validateInactivityTimeoutSeconds(
+			raw.inactivityTimeoutSeconds,
+			backendForKnownFailure,
+		);
+		if (typeof inactivityTimeoutSeconds !== "number")
+			return inactivityTimeoutSeconds;
+		input.inactivityTimeoutSeconds = inactivityTimeoutSeconds;
 	}
 
 	if (raw.model !== undefined) {

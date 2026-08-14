@@ -34,6 +34,7 @@ import {
 	THINKING_LEVELS,
 	WORKSPACE_MODES,
 	WORKTREE_POLICIES,
+	DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
 	type ExecutionMode,
 	type ResolveInput,
 	type ResolveValidationFailure,
@@ -158,6 +159,12 @@ const SUBAGENT_TASK_SCHEMA = Type.Object({
 		Type.Boolean({
 			description:
 				"Capture redacted child tool-call telemetry as artifacts. Default false.",
+		}),
+	),
+	inactivityTimeoutSeconds: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			description: `Maximum idle time in seconds without transcript, tool, output, or worker activity. Default ${DEFAULT_INACTIVITY_TIMEOUT_SECONDS} seconds; set to 0 to disable.`,
 		}),
 	),
 });
@@ -423,6 +430,12 @@ export function buildSubagentToolDefinition(
 				Type.Union(WORKTREE_POLICIES.map((value) => Type.Literal(value))),
 			),
 			cwd: Type.Optional(Type.String({ minLength: 1 })),
+			inactivityTimeoutSeconds: Type.Optional(
+				Type.Number({
+					minimum: 0,
+					description: `Maximum idle time in seconds without transcript, tool, output, or worker activity. Default ${DEFAULT_INACTIVITY_TIMEOUT_SECONDS} seconds; set to 0 to disable.`,
+				}),
+			),
 			async: Type.Optional(Type.Boolean()),
 			onComplete: Type.Optional(
 				Type.Union(ON_COMPLETE_ACTIONS.map((value) => Type.Literal(value))),
