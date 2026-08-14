@@ -25,6 +25,8 @@ import { isSafeId } from "./core/identifiers.ts";
 import type { LiveProgress } from "./live-progress.ts";
 import { readLiveTranscriptEvents } from "./live-transcript.ts";
 import { clip, stripAnsi } from "./core/text-width.ts";
+import { isEscapeKey, isArrowKey } from "./core/keyboard.ts";
+import { nowMs, fmtAge, fmtDuration } from "./core/formatters.ts";
 
 const WATCH_REFRESH_MS = 1_000;
 const RUNS_DIR = ".pi/agent/runs";
@@ -85,23 +87,7 @@ function borderBottom(width: number): string {
 	return `└${"─".repeat(Math.max(0, width - 2))}┘`;
 }
 
-function nowMs(): number {
-	return Date.now();
-}
 
-function fmtAge(ms: number, now = nowMs()): string {
-	const delta = Math.max(0, now - ms);
-	if (delta < 1_000) return "now";
-	if (delta < 60_000) return `${Math.floor(delta / 1_000)}s ago`;
-	if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
-	return `${Math.floor(delta / 3_600_000)}h ago`;
-}
-
-function fmtDuration(ms: number): string {
-	const seconds = Math.max(0, Math.floor(ms / 1_000));
-	if (seconds < 60) return `${seconds}s`;
-	return `${Math.floor(seconds / 60)}m${seconds % 60}s`;
-}
 
 function isTerminalStatus(status: string): boolean {
 	return status !== "running" && status !== "pending";
@@ -901,38 +887,5 @@ export class SubagentWatch implements Component {
 
 }
 
-function isEscapeKey(data: string): boolean {
-	return (
-		data === "\u001b" ||
-		data === "escape" ||
-		data === "esc" ||
-		data === "Esc" ||
-		data === "ctrl+[" ||
-		data.startsWith("escape") ||
-		data.startsWith("esc") ||
-		/^\u001b\[27(?:;\d+)?(?::\d+)?u$/.test(data)
-	);
-}
 
-function isArrowKey(
-	data: string,
-	direction: "up" | "down" | "left" | "right",
-): boolean {
-	if (data === direction) return true;
-	const legacy: Record<typeof direction, string[]> = {
-		up: ["\u001b[A", "\u001bOA", "\u001b[a"],
-		down: ["\u001b[B", "\u001bOB", "\u001b[b"],
-		left: ["\u001b[D", "\u001bOD", "\u001b[d"],
-		right: ["\u001b[C", "\u001bOC", "\u001b[c"],
-	};
-	if (legacy[direction].includes(data)) return true;
-	const suffix: Record<typeof direction, string> = {
-		up: "A",
-		down: "B",
-		right: "C",
-		left: "D",
-	};
-	return new RegExp(`^\\u001b\\[1;\\d+(?::\\d+)?${suffix[direction]}$`).test(
-		data,
-	);
-}
+

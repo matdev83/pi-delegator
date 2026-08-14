@@ -201,7 +201,11 @@ try {
 	assert.equal(failedWait.status, "completed");
 	assert.equal(failedWait.snapshot?.status, "failed");
 	let failedStatus;
-	for (let index = 0; index < 40; index += 1) {
+	// The completion monitor polls waitForRun at 500ms before writing the
+	// completion field, so this loop must tolerate far more than one monitor
+	// cycle. A tight window (2s) races the monitor under CI/CPU load and
+	// flakes; 120 x 50ms = 6s covers ~12 monitor cycles.
+	for (let index = 0; index < 120; index += 1) {
 		failedStatus = await getSubagentStatus({
 			cwd,
 			runId: failedStart.runId,
@@ -211,7 +215,11 @@ try {
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	assert.equal(failedStatus?.metadata.contextLengthExceeded, false);
-	assert.equal(failedStatus?.completion?.notified, true);
+	assert.equal(
+		failedStatus?.completion?.notified,
+		true,
+		"completion.notified should appear after the async run reaches a terminal state",
+	);
 	assert.equal(failedStatus?.completion?.updatesSent, 1);
 	assert.equal(completionCalls, 1);
 
