@@ -8,6 +8,7 @@ npm-debug.log*
 # Local agent state and codegraph indexes
 .pi/
 .codegraph/
+.go-agy-acp-wrapper/
 
 # OS / editor noise
 .DS_Store
