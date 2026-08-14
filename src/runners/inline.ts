@@ -26,6 +26,11 @@ import {
 	flushToolCallTelemetry,
 	ToolCallTelemetryCollector,
 } from "./tool-call-telemetry.ts";
+import {
+	createInactivityWatchdog,
+	normalizeInactivityTimeoutMs,
+	type InactivityWatchdog,
+} from "./inactivity.ts";
 
 export interface RunInlineModelOptions {
 	agent: string;
@@ -40,6 +45,8 @@ export interface RunInlineModelOptions {
 	runsDir?: string;
 	correlationId?: string;
 	timeoutMs?: number;
+	/** Internal milliseconds value; the public tool option is in seconds. */
+	inactivityTimeoutMs?: number;
 	signal?: AbortSignal;
 	workspace?: Partial<ResultWorkspace>;
 	model?: string;
@@ -461,36 +468,55 @@ async function promptWithStops(
 	session: AgentSessionLike,
 	prompt: string,
 	timeoutMs: number | undefined,
+	inactivityTimeoutMs: number,
 	signal: AbortSignal | undefined,
+	setActivityHandler: (handler: () => void) => void,
 ): Promise<FailureKind | null> {
 	let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+	let inactivityWatchdog: InactivityWatchdog | undefined;
+	let abortListener: (() => void) | undefined;
 	let settled = false;
 
-	const promptPromise = session.prompt(prompt);
 	const stopPromise = new Promise<FailureKind | null>((resolveStop) => {
 		function stop(kind: FailureKind): void {
 			if (settled) return;
 			settled = true;
+			if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+			inactivityWatchdog?.dispose();
+			if (abortListener !== undefined)
+				signal?.removeEventListener("abort", abortListener);
 			void session.abort?.();
 			resolveStop(kind);
 		}
 
 		if (timeoutMs !== undefined)
 			timeoutTimer = setTimeout(() => stop("timeout"), timeoutMs);
+		inactivityWatchdog = createInactivityWatchdog(
+			inactivityTimeoutMs,
+			() => stop("timeout"),
+		);
+		setActivityHandler(() => inactivityWatchdog?.touch());
 		if (signal !== undefined) {
-			if (signal.aborted) stop("abort");
-			else
-				signal.addEventListener("abort", () => stop("abort"), { once: true });
+			abortListener = () => stop("abort");
+			if (signal.aborted) abortListener();
+			else signal.addEventListener("abort", abortListener, { once: true });
 		}
 	});
 
-	const result = await Promise.race([
-		promptPromise.then(() => null),
-		stopPromise,
-	]);
-	settled = true;
-	if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
-	return result;
+	try {
+		const promptPromise = session.prompt(prompt);
+		return await Promise.race([
+			promptPromise.then(() => null),
+			stopPromise,
+		]);
+	} finally {
+		settled = true;
+		if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+		inactivityWatchdog?.dispose();
+		setActivityHandler(() => undefined);
+		if (abortListener !== undefined)
+			signal?.removeEventListener("abort", abortListener);
+	}
 }
 
 export async function runInlineModel(
@@ -504,6 +530,9 @@ export async function runInlineModel(
 	}
 
 	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+	const inactivityTimeoutMs = normalizeInactivityTimeoutMs(
+		options.inactivityTimeoutMs,
+	);
 	const cwd = resolve(options.cwd ?? process.cwd());
 	const artifactCwd = resolve(options.artifactCwd ?? cwd);
 	const startedAt = new Date();
@@ -597,7 +626,9 @@ export async function runInlineModel(
 				: { thinkingLevel: requestedThinking ?? modelThinking }),
 		});
 
+		let activityHandler: () => void = () => undefined;
 		const unsubscribe = session.subscribe?.((event) => {
+			activityHandler();
 			toolCallTelemetry?.processEvent(event);
 			publishLiveTranscriptEvent(store.runId, store.attemptId, event);
 			liveEvents.append(event);
@@ -613,7 +644,11 @@ export async function runInlineModel(
 				session,
 				buildPrompt(options),
 				timeoutMs,
+				inactivityTimeoutMs,
 				options.signal,
+				(handler) => {
+					activityHandler = handler;
+				},
 			);
 			if (stopKind !== null) failureKind = stopKind;
 			if (outputText.length === 0)

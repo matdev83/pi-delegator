@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { rmTree } from "./rm-tree.mjs";
 import {
 	appendRunEvent,
+	beginRunRecord,
 	commitAttemptResultIfActive,
 	createAttemptArtifactStore,
 	finishAttemptFromResult,
@@ -56,6 +57,62 @@ try {
 		undefined,
 		"late process update must not mutate terminal attempt metadata",
 	);
+
+	const resultBeforeRegistryRun = "run_lifecycle_result_before_registry";
+	const resultBeforeRegistryAttempt = "attempt_result_before_registry";
+	const resultBeforeRegistryStore = await createAttemptArtifactStore({
+		cwd,
+		runId: resultBeforeRegistryRun,
+		attemptId: resultBeforeRegistryAttempt,
+	});
+	await resultBeforeRegistryStore.writeResult({
+		backend: "inline",
+		status: "completed",
+		failureKind: null,
+		cwd,
+		startedAt: "2026-01-01T00:00:00.000Z",
+		completedAt: "2026-01-01T00:00:01.000Z",
+		workspace: { mode: "shared", cwd, worktreePath: null },
+		sandbox: { enabled: false },
+		exitCode: 0,
+		signal: null,
+		artifacts: [],
+		metadata: { contextLengthExceeded: false },
+	});
+	await beginRunRecord({
+		cwd,
+		runId: resultBeforeRegistryRun,
+		mode: "single",
+		backend: "inline",
+		activeAttemptId: resultBeforeRegistryAttempt,
+		attempts: [
+			{
+				attemptId: resultBeforeRegistryAttempt,
+				status: "running",
+				backend: "inline",
+				artifactCwd: cwd,
+			},
+		],
+	});
+	const resultFirstStatus = await getSubagentStatus({
+		cwd,
+		runId: resultBeforeRegistryRun,
+		attemptId: resultBeforeRegistryAttempt,
+	});
+	assert.equal(
+		resultFirstStatus?.status,
+		"completed",
+		"a terminal result artifact must not be hidden by a stale running registry row",
+	);
+	const resultFirstWait = await waitForSubagent({
+		cwd,
+		runId: resultBeforeRegistryRun,
+		attemptId: resultBeforeRegistryAttempt,
+		timeoutMs: 100,
+		pollIntervalMs: 10,
+	});
+	assert.equal(resultFirstWait.status, "completed");
+	assert.equal(resultFirstWait.snapshot?.status, "completed");
 	const lateCancel = await store.writeResult({
 		backend: "inline",
 		status: "cancelled",

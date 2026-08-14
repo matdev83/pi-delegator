@@ -600,12 +600,30 @@ function mergeRecordSnapshot(
 	const attempt = record.attempts.find(
 		(candidate) => candidate.attemptId === snapshot.attemptId,
 	);
+	// The result artifact is written atomically by the runner before registry
+	// finalization. If that finalization was interrupted, the registry can still
+	// say "running" even though the selected attempt has a terminal result.
+	// Preserve that terminal evidence so status/wait do not block forever. A
+	// terminal registry state remains authoritative over a stale non-terminal
+	// result artifact.
+	const registryIsTerminal = isTerminalStatus(record.status);
+	const lifecycle = registryIsTerminal
+		? {
+				status: record.status,
+				failureKind: record.failureKind,
+				completedAt: record.completedAt,
+			}
+		: {
+				status: snapshot.status,
+				failureKind: snapshot.failureKind,
+				completedAt: snapshot.completedAt,
+			};
 	return {
 		...snapshot,
 		correlationId: snapshot.correlationId ?? record.correlationId,
-		status: record.status,
-		failureKind: record.failureKind,
-		completedAt: record.completedAt,
+		status: lifecycle.status,
+		failureKind: lifecycle.failureKind,
+		completedAt: lifecycle.completedAt,
 		mode: record.mode,
 		dependency: record.dependency,
 		registryPath: relativeRunRecordPath(ref),

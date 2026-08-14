@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { unlink, writeFile } from "node:fs/promises";
+import { stat, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -26,6 +26,7 @@ import {
 	type RunHeadlessModelOptions,
 } from "./headless-model.ts";
 import { workerScript } from "./tmux.ts";
+import { normalizeInactivityTimeoutMs } from "./inactivity.ts";
 
 const execFileAsync = promisify(execFile);
 const POLL_INTERVAL_MS = 100;
@@ -38,6 +39,7 @@ interface RunHerdrProcessOptions {
 	attemptId?: string;
 	runsDir?: string;
 	timeoutMs?: number;
+	inactivityTimeoutMs?: number;
 	signal?: AbortSignal;
 	sandbox?: SandboxInput | false | null;
 	workspace?: Partial<ResultWorkspace>;
@@ -103,6 +105,14 @@ async function pathBytes(path: string): Promise<number> {
 	try {
 		const { stat } = await import("node:fs/promises");
 		return (await stat(path)).size;
+	} catch {
+		return 0;
+	}
+}
+
+async function activityTimestamp(path: string): Promise<number> {
+	try {
+		return (await stat(path)).mtimeMs;
 	} catch {
 		return 0;
 	}
@@ -225,6 +235,9 @@ async function runHerdrProcess(options: RunHerdrProcessOptions): Promise<{
 	const argv = options.argv;
 	assertRunnableArgv(argv);
 	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+	const inactivityTimeoutMs = normalizeInactivityTimeoutMs(
+		options.inactivityTimeoutMs,
+	);
 	const cwd = resolve(options.cwd ?? process.cwd());
 	const artifactCwd = resolve(options.artifactCwd ?? cwd);
 	const startedAt = new Date();
@@ -274,11 +287,13 @@ async function runHerdrProcess(options: RunHerdrProcessOptions): Promise<{
 	const eventPath = join(store.taskDir, "pi-events.jsonl");
 	const stderrPath = store.pathFor("stderr");
 	const metaPath = join(store.taskDir, "herdr-worker-meta.json");
+	const activityPath = join(store.taskDir, "activity.timestamp");
 	const scriptPath = join(store.taskDir, "herdr-worker.mjs");
+	await writeFile(activityPath, `${Date.now()}\n`);
 
 	await writeFile(
 		scriptPath,
-		workerScript(argv, cwd, eventPath, stderrPath, metaPath),
+		workerScript(argv, cwd, eventPath, stderrPath, metaPath, activityPath),
 	);
 
 	const label = `pi-delegator-${store.runId}`.replace(/[^A-Za-z0-9_-]/g, "-");
@@ -331,6 +346,7 @@ async function runHerdrProcess(options: RunHerdrProcessOptions): Promise<{
 	}
 
 	const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
+	let lastActivityAt = Date.now();
 	let stopKind: "timeout" | "abort" | null = null;
 
 	while (true) {
@@ -355,8 +371,17 @@ async function runHerdrProcess(options: RunHerdrProcessOptions): Promise<{
 			};
 		}
 
-		if (options.signal?.aborted) stopKind = "abort";
-		if (deadline !== undefined && Date.now() >= deadline) stopKind = "timeout";
+		lastActivityAt = Math.max(
+			lastActivityAt,
+			await activityTimestamp(activityPath),
+		);
+		if (options.signal?.aborted) stopKind ??= "abort";
+		if (deadline !== undefined && Date.now() >= deadline) stopKind ??= "timeout";
+		if (
+			inactivityTimeoutMs > 0 &&
+			Date.now() - lastActivityAt >= inactivityTimeoutMs
+		)
+			stopKind ??= "timeout";
 		if (stopKind !== null) {
 			await closePane(workspace.paneId);
 			return {

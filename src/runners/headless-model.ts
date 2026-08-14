@@ -67,6 +67,11 @@ import {
 	ToolCallTelemetryCollector,
 } from "./tool-call-telemetry.ts";
 import {
+	createInactivityWatchdog,
+	normalizeInactivityTimeoutMs,
+	type InactivityWatchdog,
+} from "./inactivity.ts";
+import {
 	CONTEXT_RECOVERY_EVICT_FRACTION,
 	normalizeToolResultBudget,
 	TOOL_RESULT_BUDGET_ENV,
@@ -90,6 +95,8 @@ export interface RunHeadlessModelOptions {
 	parentSessionId?: string;
 	sessionId?: string;
 	timeoutMs?: number;
+	/** Internal milliseconds value; the public tool option is in seconds. */
+	inactivityTimeoutMs?: number;
 	signal?: AbortSignal;
 	piCommand?: string;
 	sandbox?: SandboxInput | false | null;
@@ -455,6 +462,7 @@ async function runProcess(
 	argv: readonly [string, ...string[]],
 	cwd: string,
 	timeoutMs: number | undefined,
+	inactivityTimeoutMs: number,
 	store: Awaited<ReturnType<typeof createAttemptArtifactStore>>,
 	captureToolCalls?: boolean,
 	abortSignal?: AbortSignal,
@@ -530,12 +538,15 @@ async function runProcess(
 		let stopKind: "timeout" | "abort" | null = null;
 		let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 		let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+		let inactivityWatchdog: InactivityWatchdog | undefined;
 
 		function clearTimers(): void {
 			if (timeoutTimer) clearTimeout(timeoutTimer);
 			if (forceKillTimer) clearTimeout(forceKillTimer);
 			timeoutTimer = null;
 			forceKillTimer = null;
+			inactivityWatchdog?.dispose();
+			inactivityWatchdog = undefined;
 		}
 
 		function cleanup(): void {
@@ -563,6 +574,13 @@ async function runProcess(
 			signalChild("SIGTERM");
 			forceKillTimer ??= setTimeout(() => {
 				signalChild("SIGKILL");
+				const forcedKind = stopKind ?? kind;
+				settle({
+					status: forcedKind === "abort" ? "cancelled" : "failed",
+					failureKind: forcedKind,
+					exitCode: null,
+					signal: "SIGKILL",
+				});
 			}, 1_000);
 		}
 
@@ -574,6 +592,10 @@ async function runProcess(
 			if (settled) return;
 			settled = true;
 			cleanup();
+			// A killed Windows child can leave inherited stdio handles open. Close
+			// our copies so timeout/abort returns do not wait forever for `close`.
+			child.stdout?.destroy();
+			child.stderr?.destroy();
 			void finishWith(outcome).then(resolveProcess, () =>
 				resolveProcess({
 					outcome: {
@@ -592,10 +614,12 @@ async function runProcess(
 		}
 
 		child.stdout?.on("data", (chunk: Buffer | string) => {
+			inactivityWatchdog?.touch();
 			parser.push(toBuffer(chunk));
 		});
 
 		child.stderr?.on("data", (chunk: Buffer | string) => {
+			inactivityWatchdog?.touch();
 			const buffer = toBuffer(chunk);
 			const text = buffer.toString("utf8");
 			stderrText = appendLimited(stderrText, text, STDERR_TEXT_LIMIT);
@@ -646,6 +670,10 @@ async function runProcess(
 				requestStop("timeout");
 			}, timeoutMs);
 		}
+		inactivityWatchdog = createInactivityWatchdog(
+			inactivityTimeoutMs,
+			() => requestStop("timeout"),
+		);
 
 		abortSignal?.addEventListener("abort", onAbort, { once: true });
 		if (abortSignal?.aborted) requestStop("abort");
@@ -663,6 +691,9 @@ export async function runHeadlessModel(
 	}
 
 	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+	const inactivityTimeoutMs = normalizeInactivityTimeoutMs(
+		options.inactivityTimeoutMs,
+	);
 	const cwd = resolve(options.cwd ?? process.cwd());
 	const artifactCwd = resolve(options.artifactCwd ?? cwd);
 	const sessionMetadata = await resultSessionMetadata(cwd, options.sessionId);
@@ -719,6 +750,7 @@ export async function runHeadlessModel(
 								launch.argv,
 								cwd,
 								timeoutMs,
+								inactivityTimeoutMs,
 								store,
 								options.captureToolCalls,
 								options.signal,
@@ -732,6 +764,7 @@ export async function runHeadlessModel(
 						argv,
 						cwd,
 						timeoutMs,
+						inactivityTimeoutMs,
 						store,
 						options.captureToolCalls,
 						options.signal,

@@ -50,6 +50,13 @@ export const THINKING_LEVELS = [
 	"high",
 	"xhigh",
 ] as const;
+export const DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 15 * 60;
+
+export function inactivityTimeoutMsFromSeconds(
+	seconds: number | undefined,
+): number {
+	return (seconds ?? DEFAULT_INACTIVITY_TIMEOUT_SECONDS) * 1000;
+}
 
 export type Backend = (typeof BACKENDS)[number];
 export type ResolvedBackend = (typeof RESOLVED_BACKENDS)[number];
@@ -113,6 +120,8 @@ export interface SubagentTaskInput {
 	visible?: boolean;
 	cwd?: string;
 	timeoutMs?: number;
+	/** Abort the worker after this many seconds without observable activity; 0 disables it. */
+	inactivityTimeoutSeconds?: number;
 	model?: string;
 	sessionId?: string;
 	thinking?: ThinkingLevel;
@@ -149,6 +158,8 @@ export interface ResolveInput {
 	async?: boolean;
 	onComplete?: OnCompleteAction;
 	timeoutMs?: number;
+	/** Abort the worker after this many seconds without observable activity; 0 disables it. */
+	inactivityTimeoutSeconds?: number;
 	model?: string;
 	thinking?: ThinkingLevel;
 	tools?: string[];

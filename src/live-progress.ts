@@ -77,7 +77,13 @@ const UNMATCHED_TTL_MS = 10 * 60_000;
 const MISSING_RUN_TTL_MS = 2 * 60_000;
 const TAIL_BYTES = 4_096;
 const LAST_LINE_MAX = 40;
-const PROGRESS_FILES = ["pi-events.jsonl", "output.log", "stderr.log", "result.json"];
+const PROGRESS_FILES = [
+	"pi-events.jsonl",
+	"output.log",
+	"stderr.log",
+	"result.json",
+	"activity.timestamp",
+];
 let tickInFlight = false;
 
 /**
