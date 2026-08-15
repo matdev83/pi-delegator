@@ -72,6 +72,7 @@
     "check:docs": "node ./test/checks/docs.mjs",
     "check:watch": "node ./test/watch.mjs",
     "check:modularization": "node ./test/checks/modularization.mjs",
+   "check:session-finish-marker": "node ./test/checks/session-finish-marker.mjs",
     "check:model:inline": "node ./test/integration/inline-model.mjs",
     "check:model:headless": "node ./test/integration/headless-model.mjs",
     "check:model:tmux": "node ./test/integration/tmux-model.mjs",
@@ -80,8 +81,9 @@
     "release:check": "node ./scripts/release-check.mjs",
     "check": "npm run check:static",
     "check:types": "tsc -p tsconfig.json",
-    "check:static": "npm run check:types && npm run check:api && npm run check:resolver && npm run check:artifacts && npm run check:parent-session && npm run check:panel-session-scope && npm run check:contracts && npm run check:agents && npm run check:no-chain && npm run check:panel && npm run check:worktree-cleanup && npm run check:workspace-policy && npm run check:lifecycle && npm run check:fail-fast && npm run check:schema-sync && npm run check:run-lock && npm run check:reconcile && npm run check:headless-streaming && npm run check:usage-accumulation && npm run check:tool-result-budget && npm run check:live-progress && npm run check:output-preview && npm run check:package-identity && npm run check:docs && npm run check:watch && npm run check:modularization",
-    "check:integration": "npm run check:model:inline && npm run check:model:headless && npm run check:model:tmux"
+    "check:static": "npm run check:types && npm run check:api && npm run check:resolver && npm run check:artifacts && npm run check:parent-session && npm run check:panel-session-scope && npm run check:contracts && npm run check:agents && npm run check:no-chain && npm run check:panel && npm run check:worktree-cleanup && npm run check:workspace-policy && npm run check:lifecycle && npm run check:fail-fast && npm run check:schema-sync && npm run check:run-lock && npm run check:reconcile && npm run check:headless-streaming && npm run check:usage-accumulation && npm run check:tool-result-budget && npm run check:live-progress && npm run check:output-preview && npm run check:package-identity && npm run check:docs && npm run check:watch && npm run check:modularization && npm run check:session-finish-marker",
+    "check:integration": "npm run check:model:inline && npm run check:model:headless && npm run check:model:tmux",
+    "check:session-finish-marker": "node ./test/checks/session-finish-marker.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.54",

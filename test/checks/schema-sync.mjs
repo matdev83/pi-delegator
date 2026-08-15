@@ -48,6 +48,7 @@ const probeValues = {
 	onComplete: "return",
 	timeoutMs: 1000,
 	inactivityTimeoutSeconds: 0,
+	recoveryInactivitySeconds: 0,
 	model: "provider/model",
 	tools: ["read"],
 	systemPrompt: "prompt",

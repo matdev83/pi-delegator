@@ -13,6 +13,7 @@ import {
 import type { ResultWorkspace } from "../artifacts/result.ts";
 import {
 	THINKING_LEVELS,
+	DEFAULT_RECOVERY_GRACE_SECONDS,
 	type AgentScope,
 	type FailureKind,
 	type ThinkingLevel,
@@ -28,9 +29,16 @@ import {
 } from "./tool-call-telemetry.ts";
 import {
 	createInactivityWatchdog,
+	createRecoverableWatchdog,
 	normalizeInactivityTimeoutMs,
+	normalizeRecoveryInactivityTimeoutMs,
 	type InactivityWatchdog,
+	type RecoverableWatchdog,
 } from "./inactivity.ts";
+import {
+	matchesSessionFinishMarker,
+	SESSION_FINISH_PROMPT,
+} from "./session-finish-marker.ts";
 
 export interface RunInlineModelOptions {
 	agent: string;
@@ -47,6 +55,8 @@ export interface RunInlineModelOptions {
 	timeoutMs?: number;
 	/** Internal milliseconds value; the public tool option is in seconds. */
 	inactivityTimeoutMs?: number;
+	/** Internal milliseconds value; the public tool option is in seconds. 0 disables. */
+	recoveryInactivityTimeoutMs?: number;
 	signal?: AbortSignal;
 	workspace?: Partial<ResultWorkspace>;
 	model?: string;
@@ -464,59 +474,150 @@ function createChildResourceLoader(
 	});
 }
 
+interface PromptRunResult {
+	failureKind: FailureKind | null;
+	finishedByMarker: boolean;
+	recoveryProbeCount: number;
+}
+
 async function promptWithStops(
 	session: AgentSessionLike,
 	prompt: string,
 	timeoutMs: number | undefined,
 	inactivityTimeoutMs: number,
+	recoveryInactivityTimeoutMs: number,
 	signal: AbortSignal | undefined,
 	setActivityHandler: (handler: () => void) => void,
-): Promise<FailureKind | null> {
+	setAssistantTextHandler: (handler: (text: string) => void) => void,
+	onRecoveryProbe: (probeCount: number) => void,
+): Promise<PromptRunResult> {
+	const recoveryEnabled = recoveryInactivityTimeoutMs > 0;
+	const recoveryGraceMs = DEFAULT_RECOVERY_GRACE_SECONDS * 1000;
 	let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+	let recoveryGraceTimer: ReturnType<typeof setTimeout> | undefined;
 	let inactivityWatchdog: InactivityWatchdog | undefined;
+	let recoveryWatchdog: RecoverableWatchdog | undefined;
 	let abortListener: (() => void) | undefined;
 	let settled = false;
-
-	const stopPromise = new Promise<FailureKind | null>((resolveStop) => {
-		function stop(kind: FailureKind): void {
-			if (settled) return;
-			settled = true;
-			if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
-			inactivityWatchdog?.dispose();
-			if (abortListener !== undefined)
-				signal?.removeEventListener("abort", abortListener);
-			void session.abort?.();
-			resolveStop(kind);
-		}
-
-		if (timeoutMs !== undefined)
-			timeoutTimer = setTimeout(() => stop("timeout"), timeoutMs);
-		inactivityWatchdog = createInactivityWatchdog(
-			inactivityTimeoutMs,
-			() => stop("timeout"),
-		);
-		setActivityHandler(() => inactivityWatchdog?.touch());
-		if (signal !== undefined) {
-			abortListener = () => stop("abort");
-			if (signal.aborted) abortListener();
-			else signal.addEventListener("abort", abortListener, { once: true });
-		}
+	let recovering = false;
+	let finishedByMarker = false;
+	let recoveryProbeCount = 0;
+	let turnGeneration = 0;
+	let resolveStop: (result: PromptRunResult) => void = () => undefined;
+	const stopPromise = new Promise<PromptRunResult>((resolve) => {
+		resolveStop = resolve;
 	});
 
-	try {
-		const promptPromise = session.prompt(prompt);
-		return await Promise.race([
-			promptPromise.then(() => null),
-			stopPromise,
-		]);
-	} finally {
+	function clearRecoveryGrace(): void {
+		if (recoveryGraceTimer !== undefined) {
+			clearTimeout(recoveryGraceTimer);
+			recoveryGraceTimer = undefined;
+		}
+	}
+
+	function settle(kind: FailureKind | null): void {
+		if (settled) return;
 		settled = true;
 		if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+		clearRecoveryGrace();
 		inactivityWatchdog?.dispose();
-		setActivityHandler(() => undefined);
+		recoveryWatchdog?.dispose();
 		if (abortListener !== undefined)
 			signal?.removeEventListener("abort", abortListener);
+		if (kind !== null) void session.abort?.();
+		resolveStop({ failureKind: kind, finishedByMarker, recoveryProbeCount });
 	}
+
+	function stop(kind: FailureKind): void {
+		settle(kind);
+	}
+
+	function onMarkerDetected(text: string): void {
+		if (settled || !recovering) return;
+		if (!matchesSessionFinishMarker(text)) return;
+		finishedByMarker = true;
+		settle(null);
+	}
+
+	function beginTurn(promptText: string, onDone: () => void): void {
+		const generation = ++turnGeneration;
+		try {
+			void Promise.resolve(session.prompt(promptText)).then(
+				() => {
+					if (turnGeneration === generation && !settled) onDone();
+				},
+				() => {
+					if (turnGeneration === generation && !settled) stop("timeout");
+				},
+			);
+		} catch {
+			if (!settled) stop("timeout");
+		}
+	}
+
+	function enterRecovery(): void {
+		if (settled || recovering) return;
+		recovering = true;
+		recoveryProbeCount += 1;
+		onRecoveryProbe(recoveryProbeCount);
+		clearRecoveryGrace();
+		recoveryGraceTimer = setTimeout(() => stop("timeout"), recoveryGraceMs);
+		// The in-flight turn produced no activity; abort it so the session can
+		// accept the finish probe as the next prompt.
+		void session.abort?.().catch(() => undefined);
+		beginTurn(SESSION_FINISH_PROMPT, () => {
+			if (settled) return;
+			if (finishedByMarker) {
+				settle(null);
+				return;
+			}
+			// The session replied without the finish marker: it resumed
+			// operations. Keep the tool call open and wait for the next
+			// silent window before probing again.
+			recovering = false;
+			clearRecoveryGrace();
+			recoveryWatchdog?.rearm();
+		});
+	}
+
+	beginTurn(prompt, () => {
+		if (!settled) settle(null);
+	});
+
+	if (timeoutMs !== undefined)
+		timeoutTimer = setTimeout(() => stop("timeout"), timeoutMs);
+	inactivityWatchdog = createInactivityWatchdog(
+		inactivityTimeoutMs,
+		() => stop("timeout"),
+	);
+	if (recoveryEnabled) {
+		recoveryWatchdog = createRecoverableWatchdog(
+			recoveryInactivityTimeoutMs,
+			enterRecovery,
+		);
+	}
+	setActivityHandler(() => {
+		if (settled) return;
+		if (recovering) {
+			// Any reaction counts as liveness: restart the silence deadline.
+			clearRecoveryGrace();
+			recoveryGraceTimer = setTimeout(
+				() => stop("timeout"),
+				recoveryGraceMs,
+			);
+			inactivityWatchdog?.touch();
+			return;
+		}
+		inactivityWatchdog?.touch();
+		recoveryWatchdog?.touch();
+	});
+	setAssistantTextHandler(onMarkerDetected);
+	if (signal !== undefined) {
+		abortListener = () => stop("abort");
+		if (signal.aborted) abortListener();
+		else signal.addEventListener("abort", abortListener, { once: true });
+	}
+	return await stopPromise;
 }
 
 export async function runInlineModel(
@@ -532,6 +633,9 @@ export async function runInlineModel(
 	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
 	const inactivityTimeoutMs = normalizeInactivityTimeoutMs(
 		options.inactivityTimeoutMs,
+	);
+	const recoveryInactivityTimeoutMs = normalizeRecoveryInactivityTimeoutMs(
+		options.recoveryInactivityTimeoutMs,
 	);
 	const cwd = resolve(options.cwd ?? process.cwd());
 	const artifactCwd = resolve(options.artifactCwd ?? cwd);
@@ -627,6 +731,7 @@ export async function runInlineModel(
 		});
 
 		let activityHandler: () => void = () => undefined;
+		let assistantTextHandler: (text: string) => void = () => undefined;
 		const unsubscribe = session.subscribe?.((event) => {
 			activityHandler();
 			toolCallTelemetry?.processEvent(event);
@@ -637,20 +742,30 @@ export async function runInlineModel(
 			liveOutput.append(delta);
 			const agentEndText = maybeAssistantTextFromAgentEnd(event);
 			if (agentEndText.length > 0) outputText = agentEndText;
+			if (stdoutText.length > 0) assistantTextHandler(stdoutText);
 		});
 
 		try {
-			const stopKind = await promptWithStops(
+			const outcome = await promptWithStops(
 				session,
 				buildPrompt(options),
 				timeoutMs,
 				inactivityTimeoutMs,
+				recoveryInactivityTimeoutMs,
 				options.signal,
 				(handler) => {
 					activityHandler = handler;
 				},
+				(handler) => {
+					assistantTextHandler = handler;
+				},
+				(probeCount) => {
+					stderrText += `[recovery] inactivity detected; sent session finish probe (attempt ${probeCount})\n`;
+				},
 			);
-			if (stopKind !== null) failureKind = stopKind;
+			if (outcome.failureKind !== null) failureKind = outcome.failureKind;
+			if (outcome.finishedByMarker)
+				stderrText += "[recovery] session replied with finish marker; completed.\n";
 			if (outputText.length === 0)
 				outputText = assistantTextFromMessages(session.messages);
 			if (outputText.length === 0) outputText = stdoutText;

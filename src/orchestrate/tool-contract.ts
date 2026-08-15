@@ -43,6 +43,8 @@ export const SUPPORTED_KEYS = new Set([
 	"runsDir",
 	"correlationId",
 	"captureToolCalls",
+	"inactivityTimeoutSeconds",
+	"recoveryInactivitySeconds",
 	"thinking",
 	"thinkingLevel",
 	"reasoningLevel",
