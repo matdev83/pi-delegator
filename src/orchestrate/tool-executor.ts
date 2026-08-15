@@ -35,6 +35,7 @@ import {
 	WORKSPACE_MODES,
 	WORKTREE_POLICIES,
 	DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
+	DEFAULT_RECOVERY_INACTIVITY_SECONDS,
 	type ExecutionMode,
 	type ResolveInput,
 	type ResolveValidationFailure,
@@ -165,6 +166,12 @@ const SUBAGENT_TASK_SCHEMA = Type.Object({
 		Type.Number({
 			minimum: 0,
 			description: `Maximum idle time in seconds without transcript, tool, output, or worker activity. Default ${DEFAULT_INACTIVITY_TIMEOUT_SECONDS} seconds; set to 0 to disable.`,
+		}),
+	),
+	recoveryInactivitySeconds: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			description: `Idle time in seconds before the subagent is probed with a session finish prompt (inline backend only). Default ${DEFAULT_RECOVERY_INACTIVITY_SECONDS} seconds; set to 0 to disable.`,
 		}),
 	),
 });
@@ -434,6 +441,12 @@ export function buildSubagentToolDefinition(
 				Type.Number({
 					minimum: 0,
 					description: `Maximum idle time in seconds without transcript, tool, output, or worker activity. Default ${DEFAULT_INACTIVITY_TIMEOUT_SECONDS} seconds; set to 0 to disable.`,
+				}),
+			),
+			recoveryInactivitySeconds: Type.Optional(
+				Type.Number({
+					minimum: 0,
+					description: `Idle time in seconds before the subagent is probed with a session finish prompt (inline backend only). Default ${DEFAULT_RECOVERY_INACTIVITY_SECONDS} seconds; set to 0 to disable.`,
 				}),
 			),
 			async: Type.Optional(Type.Boolean()),

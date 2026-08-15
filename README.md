@@ -218,6 +218,13 @@ produces transcript, tool, output, or process activity. Set
 `inactivityTimeoutSeconds: 0` to opt out; this is independent of the code API's
 optional general `timeoutMs` limit.
 
+Inline-backend runs also probe idle sessions (default 5 minutes, `recoveryInactivitySeconds`
+to change, `0` to disable). The probe asks the session whether it has remaining tasks and
+expects the finish marker `"I HAVE FULLY FINISHED ALL TASKS FROM THIS SESSION"` (matched
+fuzzily). A marker reply completes the run successfully; a session that resumes operations
+keeps the tool call open; no reaction within 3 minutes flags the session dead with the same
+`timeout` failure as the 15-minute guard. Other backends ignore the option.
+
 ### Panel
 
 Inspect runs, attempts, artifacts, and log tails in a live TUI. The panel defaults to the current Pi session, can switch to current cwd or all indexed runs, and includes status filters plus a scrollable detail pane. It shows active and recent terminal runs by default, with in-panel `m` to show more, and counts stale/malformed run pointers without exposing raw session ids.

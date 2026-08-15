@@ -21,7 +21,7 @@ import type {
 	ResolvedBackend,
 	SubagentTaskInput,
 } from "../core/constants.ts";
-import { inactivityTimeoutMsFromSeconds } from "../core/constants.ts";
+import { inactivityTimeoutMsFromSeconds, recoveryInactivityTimeoutMsFromSeconds } from "../core/constants.ts";
 import { resolveBackend } from "../core/resolver.ts";
 import { runHeadlessModel } from "../runners/headless-model.ts";
 import { runHerdrModel } from "../runners/herdr.ts";
@@ -328,6 +328,9 @@ export async function runSubagentTask(
 			timeoutMs: input.timeoutMs,
 			inactivityTimeoutMs: inactivityTimeoutMsFromSeconds(
 				input.inactivityTimeoutSeconds,
+			),
+			recoveryInactivityTimeoutMs: recoveryInactivityTimeoutMsFromSeconds(
+				input.recoveryInactivitySeconds,
 			),
 			sandbox: input.sandbox,
 			runId,
