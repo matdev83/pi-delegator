@@ -9,6 +9,12 @@
 
 ### Fixed
 
+- Make `check:panel` deterministic. The panel orders runs by result-file mtime, but
+  the fixture seeded runs with real wall-clock writes, so filesystem timestamp
+  granularity decided which runs tied and therefore where rows landed. Runs that
+  landed differently between executions failed navigation assertions at random.
+  Fixtures now pin mtimes and registry `updatedAt` values to the panel clock the
+  check already freezes, so row order is reproducible.
 - Honor Pi's `max` thinking/reasoning level. Run options, agent profile
   frontmatter, and `model:thinking` suffixes previously rejected `max` as an
   unsupported level, or silently dropped it when it came from an agent profile,
