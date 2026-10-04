@@ -107,8 +107,24 @@ async function writeRun(cwd, runId, attemptId, options) {
 		],
 	};
 	await writeFile(join(cwd, resultRel), `${JSON.stringify(result, null, 2)}\n`);
+	// The panel orders runs by result-file mtime, so fixtures that assert on row
+	// order must pin it. Filesystem timestamp granularity is not guaranteed (tmpfs
+	// caches coarse ticks), so unpinned ties make row order vary between runs on the
+	// same machine.
+	if (options.resultMtime !== undefined) {
+		await utimes(
+			join(cwd, resultRel),
+			options.resultMtime,
+			options.resultMtime,
+		);
+	}
 	return { result, outputRel, resultRel };
 }
+
+// The panel reads a frozen clock from PI_SUBAGENT_PANEL_NOW_MS, and run ordering
+// keys off run.json updatedAt and result-file mtime. Fixtures therefore anchor every
+// timestamp to this instant instead of Date.now(), so ordering stays reproducible.
+const FIXED_PANEL_NOW = Date.parse("2026-01-01T00:10:00.000Z");
 
 async function writeIndexedRun(indexDir, cwd, runId, attemptId, options) {
 	const { result, outputRel, resultRel } = await writeRun(
@@ -117,7 +133,7 @@ async function writeIndexedRun(indexDir, cwd, runId, attemptId, options) {
 		attemptId,
 		options,
 	);
-	const now = new Date().toISOString();
+	const now = new Date(FIXED_PANEL_NOW).toISOString();
 	const runDir = join(cwd, ".pi/agent/runs", runId);
 	await writeFile(
 		join(runDir, "run.json"),
@@ -472,7 +488,24 @@ async function main() {
 	const oldIndexDir = process.env.PI_SUBAGENT_RUN_INDEX_DIR;
 	const oldPanelNow = process.env.PI_SUBAGENT_PANEL_NOW_MS;
 	const oldPruneAfter = process.env.PI_SUBAGENT_RUN_LOCATOR_PRUNE_AFTER_MS;
-	const fixedPanelNow = Date.parse("2026-01-01T00:10:00.000Z");
+	const fixedPanelNow = FIXED_PANEL_NOW;
+	// Runs are ordered by result-file mtime, and runs older than
+	// STALE_RUN_AFTER_MS relative to the frozen panel clock are reclassified as stale.
+	// Pin every seeded run to an explicit whole-second offset from that clock so row
+	// order is reproducible. Leaving mtimes to real writes makes ties depend on
+	// filesystem timestamp granularity, which varies between runs on the same machine.
+	// Steps stay inside the staleness window; runs sharing a step are ordered by key.
+	const fixtureMtime = (step) => new Date(fixedPanelNow - step * 1000);
+	const ORDER = {
+		cjk: 0,
+		active: 1,
+		queued: 2,
+		scrollRecent: 3,
+		scrollOld: 4,
+		retry: 5,
+		failed: 6,
+		done: 7,
+	};
 	try {
 		process.env.PI_SUBAGENT_PANEL_NOW_MS = String(fixedPanelNow);
 		const cwd = join(tempRoot, "workspace");
@@ -584,6 +617,7 @@ async function main() {
 			status: "running",
 			backend: "headless",
 			log: "active attempt one latest",
+			resultMtime: fixtureMtime(ORDER.active),
 		});
 		await writeRun(cwd, "run_active", "attempt-2", {
 			status: "completed",
@@ -591,6 +625,7 @@ async function main() {
 			log: "active attempt two result",
 			metadata: { model: "gpt-5.5-low" },
 			thinking: "dead-thinking-probe",
+			resultMtime: fixtureMtime(ORDER.active),
 		});
 		await writeFile(
 			join(cwd, ".pi/agent/runs/run_active/events.jsonl"),
@@ -626,6 +661,7 @@ async function main() {
 			backend: "headless",
 			log: "queued waiting slot",
 			completedAt: null,
+			resultMtime: fixtureMtime(ORDER.queued),
 		});
 		await writeRun(cwd, "run_done", "attempt-1", {
 			status: "completed",
@@ -633,12 +669,14 @@ async function main() {
 			log: "done result ready",
 			metadata: { model: "gpt-5.5-low" },
 			thinking: "dead-thinking-probe",
+			resultMtime: fixtureMtime(ORDER.done),
 		});
 		await writeRun(cwd, "run_failed", "attempt-1", {
 			status: "failed",
 			backend: "inline",
 			failureKind: "timeout",
 			log: "failed timeout tail",
+			resultMtime: fixtureMtime(ORDER.failed),
 		});
 		const retryFailed = await writeRun(cwd, "run_retry_success", "attempt-1", {
 			status: "failed",
@@ -647,6 +685,7 @@ async function main() {
 			log: "first attempt failed",
 			startedAt: "2026-01-01T00:00:00.000Z",
 			completedAt: "2026-01-01T00:00:01.000Z",
+			resultMtime: fixtureMtime(ORDER.retry),
 		});
 		const retryCompleted = await writeRun(
 			cwd,
@@ -658,6 +697,7 @@ async function main() {
 				log: "retry attempt completed",
 				startedAt: "2026-01-01T00:00:02.000Z",
 				completedAt: "2026-01-01T00:00:03.000Z",
+				resultMtime: fixtureMtime(ORDER.retry),
 			},
 		);
 		await writeFile(
@@ -674,7 +714,7 @@ async function main() {
 					cwd,
 					runsDir: ".pi/agent/runs",
 					startedAt: "2026-01-01T00:00:00.000Z",
-					updatedAt: new Date().toISOString(),
+					updatedAt: fixtureMtime(ORDER.retry).toISOString(),
 					completedAt: "2026-01-01T00:00:03.000Z",
 					activeAttemptId: null,
 					latestAttemptId: "attempt-2",
@@ -711,7 +751,10 @@ async function main() {
 				2,
 			)}\n`,
 		);
-		const scrollBase = Date.now();
+		// Pinned on the frozen panel clock rather than Date.now(): the panel sorts by
+		// result-file mtime, so wall-clock write times leak filesystem timestamp
+		// granularity into row order. Scroll runs 04-23 tie at ORDER.scrollRecent and
+		// 00-03 tie at ORDER.scrollOld, so key order decides within each group.
 		for (let index = 0; index < 24; index += 1) {
 			await writeRun(
 				cwd,
@@ -721,8 +764,11 @@ async function main() {
 					status: "completed",
 					backend: "headless",
 					log: `scroll run ${index}`,
-					startedAt: new Date(scrollBase - 90_000 + index).toISOString(),
-					completedAt: new Date(scrollBase + index).toISOString(),
+					startedAt: new Date(fixedPanelNow - 300_000 + index).toISOString(),
+					completedAt: new Date(fixedPanelNow - 120_000 + index).toISOString(),
+					resultMtime: fixtureMtime(
+						index < 4 ? ORDER.scrollOld : ORDER.scrollRecent,
+					),
 				},
 			);
 		}
@@ -800,6 +846,7 @@ async function main() {
 			backend: "headless",
 			log: cjkLog,
 			completedAt: null,
+			resultMtime: fixtureMtime(ORDER.cjk),
 		});
 		component.handleInput("r");
 		await waitFor(
@@ -1032,7 +1079,9 @@ async function main() {
 			updatedAt: new Date(fixedPanelNow - 65_000).toISOString(),
 			log: "deterministic panel clock",
 		});
-		const freshHeartbeat = new Date(Date.now() - 10_000).toISOString();
+		// Fresh against the frozen clock, while the result file is old: the registry
+		// heartbeat is the only reason this active run is not reclassified as stale.
+		const freshHeartbeat = new Date(fixedPanelNow - 10_000).toISOString();
 		await writeIndexedRun(
 			indexDir,
 			cwd,
@@ -1044,13 +1093,15 @@ async function main() {
 				parentSessionId: sessionId,
 				updatedAt: freshHeartbeat,
 				heartbeatAt: freshHeartbeat,
-				resultMtime: new Date(Date.now() - 120_000),
+				resultMtime: new Date(fixedPanelNow - 120_000),
 				log: "registry heartbeat still fresh",
 			},
 		);
 		await writeFile(
 			join(indexDir, "run_stale.json"),
-			`${JSON.stringify({ schemaVersion: 1, runId: "run_stale", cwd: join(tempRoot, "missing-workspace"), updatedAt: new Date().toISOString() }, null, 2)}\n`,
+			// Locator pruning compares against real Date.now(), not the frozen panel clock,
+		// so a missing-run locator must stay recent to count as stale instead of pruned.
+		`${JSON.stringify({ schemaVersion: 1, runId: "run_stale", cwd: join(tempRoot, "missing-workspace"), updatedAt: new Date().toISOString() }, null, 2)}\n`,
 		);
 		await writeFile(join(indexDir, "bad.json"), "{not-json\n");
 		await mkdir(join(indexDir, "nested"));
