@@ -307,6 +307,35 @@ Interrupt a process-backed run:
 
 `interrupt` is conservative. It can signal runs with registered process metadata. Unsupported or already-terminal runs return explicit status rather than pretending cancellation succeeded.
 
+### Dependency security
+
+The sandbox runtime depends on `node-forge`. Its latest registry release,
+`1.4.0`, is affected by
+[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv).
+The repository temporarily overrides Forge to the full HTTPS Git commit from
+[upstream PR #1152](https://github.com/digitalbazaar/forge/pull/1152):
+
+```json
+{
+  "overrides": {
+    "node-forge": "git+https://github.com/digitalbazaar/forge.git#ceba34402e329f0365134f23fe19898756527d65"
+  }
+}
+```
+
+This applies to repository installs and Pi's Git-source installs, where npm runs
+inside the clone. npm ignores overrides declared by an installed dependency:
+standalone consumers and future npm-source installs need this override in their
+installation root. After changing it, reinstall dependencies and run
+`npm ls node-forge @anthropic-ai/sandbox-runtime` and `npm audit --omit=dev`.
+
+Keep the sandbox runtime's `wrapWithSandboxArgv` API; do not downgrade it to
+`0.0.50` merely to remove Forge. The plugin does not expose the runtime's optional
+TLS/MITM certificate configuration, but the vulnerable dependency is present, so
+the advisory is not suppressed. Replace the Git pin with an official patched
+Forge release once its contents are verified, or remove the override when the
+normal dependency resolution is patched.
+
 ### Pi SDK resolution
 
 Child workers must run against the same `@earendil-works/pi-coding-agent` as the

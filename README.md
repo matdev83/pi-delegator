@@ -72,6 +72,21 @@ For pinned, reproducible installations, replace `@main` with a release tag (e.g.
 > pi install npm:pi-delegator
 > ```
 
+### Temporary Forge security mitigation
+
+Git installations include a commit-pinned upstream fix for
+[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv) in
+`node-forge`, a dependency of the sandbox runtime. The fix is pinned to
+`ceba34402e329f0365134f23fe19898756527d65` from
+[Forge PR #1152](https://github.com/digitalbazaar/forge/pull/1152), pending an
+official patched release. Installing it requires Git and access to GitHub.
+
+npm overrides apply only to the installation project's root `package.json`.
+Pi's Git installer installs dependencies inside the clone, where this override
+applies. Installing this plugin as an npm dependency does not inherit its
+override; the consuming project's root must apply the same override until a
+patched dependency is available. See [dependency security](./docs/usage.md#dependency-security).
+
 ### Platform support
 
 | Platform | Out of the box | Visible live workers |
