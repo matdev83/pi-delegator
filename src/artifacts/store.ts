@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { renameWithRetry } from "../core/atomic-file.ts";
+import { atomicWriteFile } from "../core/atomic-file.ts";
 import { assertSafeId } from "../core/identifiers.ts";
 import {
   createResultEnvelope,
@@ -140,9 +140,10 @@ export async function createAttemptArtifactStore(options: CreateAttemptArtifactS
       artifacts: mergeArtifactRefs(input.artifacts ?? [], [refFor("result")]),
     });
     const resultPath = pathFor("result");
-    const tempPath = `${resultPath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(result, null, 2)}\n`);
-    await renameWithRetry(tempPath, resultPath);
+    await atomicWriteFile(
+      resultPath,
+      `${JSON.stringify(result, null, 2)}\n`,
+    );
     return result;
   }
 

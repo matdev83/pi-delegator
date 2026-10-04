@@ -267,6 +267,26 @@ function parentSessionIdFromCtx(ctx: unknown): string | undefined {
 	}
 }
 
+/**
+ * `provider/id` of the model the host Pi session is currently running.
+ *
+ * A run that names no model must not fall back to the legacy
+ * `settings.defaultModel`: Pi 1.0's own session does not honour that key, so the
+ * value is routinely stale or points at a provider registered by an extension
+ * (which an inline worker's private model runtime cannot authenticate against).
+ * Inheriting the host model keeps agentless runs on a model the parent session
+ * has already proven it can use.
+ */
+function hostModelRefFromCtx(ctx: unknown): string | undefined {
+	if (!isRecord(ctx)) return undefined;
+	const model = ctx.model;
+	if (!isRecord(model)) return undefined;
+	const { provider, id } = model as { provider?: unknown; id?: unknown };
+	if (typeof provider !== "string" || provider.length === 0) return undefined;
+	if (typeof id !== "string" || id.length === 0) return undefined;
+	return `${provider}/${id}`;
+}
+
 async function maybeConfirmProjectAgents(
 	input: ResolveInput,
 	cwd: string,
@@ -692,6 +712,10 @@ export function buildSubagentToolDefinition(
 					profileCwd,
 				);
 				Object.assign(validation.input, profiled.input);
+				// Injected, not model-settable: only consulted when neither the
+				// call nor the agent profile names a model.
+				if (validation.input.hostModel === undefined)
+					validation.input.hostModel = hostModelRefFromCtx(ctx);
 
 				const resolved = resolveBackend(validation.input);
 				if (resolved.status === "failed") return validationFailure(resolved);

@@ -11,7 +11,7 @@ import {
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { renameWithRetry } from "../core/atomic-file.ts";
+import { atomicWriteFile } from "../core/atomic-file.ts";
 import type {
 	AsyncDependency,
 	ExecutionMode,
@@ -454,9 +454,7 @@ async function writeRecordPath(
 	record: RunRecord,
 ): Promise<RunRecord> {
 	await mkdir(dirname(path), { recursive: true });
-	const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-	await writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`);
-	await renameWithRetry(tempPath, path);
+	await atomicWriteFile(path, `${JSON.stringify(record, null, 2)}\n`);
 	return record;
 }
 
@@ -630,9 +628,10 @@ async function nextSessionOrdinal(
 			}
 			const next = allocatedThrough + 1;
 			await mkdir(dirname(sequencePath), { recursive: true });
-			const tempPath = `${sequencePath}.${process.pid}.${Date.now()}.tmp`;
-			await writeFile(tempPath, `${JSON.stringify({ allocatedThrough: next })}\n`);
-			await renameWithRetry(tempPath, sequencePath);
+			await atomicWriteFile(
+				sequencePath,
+				`${JSON.stringify({ allocatedThrough: next })}\n`,
+			);
 			return next;
 		},
 	);

@@ -102,6 +102,11 @@ export interface RunHeadlessModelOptions {
 	sandbox?: SandboxInput | false | null;
 	workspace?: Partial<ResultWorkspace>;
 	model?: string;
+	/**
+	 * `provider/id` inherited from the parent Pi session. Consulted only when
+	 * neither `model` nor the agent profile names one.
+	 */
+	hostModel?: string;
 	thinking?: ThinkingLevel;
 	tools?: string[];
 	systemPrompt?: string;

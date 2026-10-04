@@ -92,7 +92,11 @@ try {
 		cwd: parentDeathCwd,
 		runId: launchedRef.runId,
 		attemptId: launchedRef.attemptId,
-		timeoutMs: 15_000,
+		// The detached worker transpiles this plugin's sources on start and then
+		// runs a real model session, so startup plus one turn is tens of seconds
+		// on a loaded machine. This asserts the lifecycle guarantee (the worker
+		// finalizes on its own once the launcher is gone), not a latency budget.
+		timeoutMs: 120_000,
 		pollIntervalMs: 100,
 	});
 	assert.equal(

@@ -65,7 +65,7 @@ const requiredPackageFiles = [
 	"NOTICE.md",
 	"CHANGELOG.md",
 	"docs/usage.md",
-	"assets/subagent-panel.png",
+  "assets/subagent-demo.png",
 	"api.mjs",
 	"src/api.ts",
 	"src/index.ts",

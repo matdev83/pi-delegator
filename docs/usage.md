@@ -307,6 +307,59 @@ Interrupt a process-backed run:
 
 `interrupt` is conservative. It can signal runs with registered process metadata. Unsupported or already-terminal runs return explicit status rather than pretending cancellation succeeded.
 
+### Pi SDK resolution
+
+Child workers must run against the same `@earendil-works/pi-coding-agent` as the
+host harness. The plugin declares the SDK as a peer dependency, so a package
+manager may materialise its own nested copy inside the plugin; that copy is
+pinned at install time and falls behind whenever the harness upgrades, which
+makes model resolution fail with `model "…" was not found or is not available`.
+
+To avoid that, out-of-process workers (async runs and detached durable workers)
+receive an explicit disk-root pin. SDK imports resolve in this order:
+
+1. `PI_DELEGATOR_SDK_ROOT` (legacy alias `PI_SUBAGENT_SDK_ROOT`) — absolute path
+   to an installed `@earendil-works/pi-coding-agent` package root.
+2. The package that owns the script running this process, validated by that
+   package's `name` field. Install layout does not matter, so a source checkout
+   (`packages/coding-agent/dist/bundle/cli.js`) resolves correctly and is never
+   shadowed by an unrelated global `pi` on `PATH`.
+3. The bare `import("@earendil-works/pi-coding-agent")` specifier, which Pi
+   aliases to the live SDK when this runs inside a Pi session. This preserves
+   compiled/embedded hosts' virtual SDK even when their entry script is outside
+   the SDK package and an unrelated `pi` is installed on `PATH`.
+4. The package owning a `pi` CLI on `PATH`, if the bare import fails.
+
+Detached workers cannot inherit virtual modules. Their disk-root pin uses the
+explicit override, then the running script's owning package, then the disk-backed
+bare runtime SDK, then `PATH` discovery. Standalone Node API callers therefore
+keep their installed peer SDK for synchronous and detached inline runs. For a
+compiled/embedded host without a discoverable matching disk
+installation, set the override to the SDK installation workers should use.
+
+Process-backed runners (`headless`, `tmux`, and `herdr`) also honor this pin:
+they resolve the pinned package's declared `bin.pi` before reusing the running
+CLI or searching `PATH`. This supports relocated installations and prevents an
+unrelated global CLI from replacing the pinned SDK. An explicit `piCommand`
+still takes precedence. Compiled hosts retain native executable invocation
+without a JavaScript script argument; Node/Bun hosts launch the pinned script.
+If the pinned root has no CLI entry, normal CLI
+discovery remains the fallback.
+
+On Windows, MSYS-form roots such as `/c/Users/...` are normalized before inline
+SDK imports and CLI discovery.
+
+CLI discovery reads the entry from the package's declared `bin.pi`, with the
+`dist/cli.js` and `dist/bundle/cli.js` layouts as fallbacks for checkouts that
+ship the SDK without a `bin` field.
+
+Set the override when Pi is installed somewhere that disk-root discovery cannot
+see (for example a relocated or containerised install):
+
+```bash
+PI_DELEGATOR_SDK_ROOT=/opt/pi/lib/node_modules/@earendil-works/pi-coding-agent
+```
+
 ### Existing-run resolution
 
 For `status`, `logs`, `wait`, `interrupt`, `mark-background`, and `reconcile`, the lookup order is:
@@ -510,6 +563,28 @@ off | minimal | low | medium | high | xhigh
 ```
 
 These options may also be set per task in `tasks[]`.
+
+### How a run picks its model
+
+In order of precedence:
+
+1. `model` on the call (or on the individual task in `tasks[]`).
+2. `model` in the agent profile's frontmatter.
+3. The model the parent Pi session is currently running.
+4. The `defaultModel` setting in `settings.json`.
+
+Step 3 keeps agentless runs (`"agent"` omitted) on a model the parent session
+has already proven it can use. It matters because Pi 1.0's own session ignores
+`defaultModel`, so that value is routinely stale or names a provider registered
+by an extension — which an `inline` worker's private model runtime cannot
+authenticate against. If an `inline` run still ends with
+`completed without assistant output`, the stderr artifact names the model that
+was used; either pass an explicit `model` backed by `auth.json`, or switch to
+`backend: "headless"` so the child loads ambient extensions before model
+resolution.
+
+`hostModel` is injected from the parent session, not a model-settable tool
+argument.
 
 Timeout notes:
 
