@@ -9,6 +9,9 @@
 
 ### Fixed
 
+- Temporarily pin the sandbox runtime's Forge dependency to upstream security
+  fix commit `ceba34402e329f0365134f23fe19898756527d65` for Git-source installs.
+  Document npm's root-only override scope for dependency consumers.
 - Standalone API callers pin their disk-backed runtime SDK before global `PATH`
   discovery, preserving SDK versions between synchronous and detached runs.
 - Compiled Pi hosts retain native CLI invocation even with an SDK-root pin;
