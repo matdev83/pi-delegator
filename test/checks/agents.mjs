@@ -64,6 +64,48 @@ Always mention injected-agent-ok.
 `,
 	);
 
+	const maxThinkingAgentsDir = join(cwd, ".pi", "agents");
+	await writeFile(
+		join(maxThinkingAgentsDir, "max-thinking.md"),
+		`---
+name: max-thinking-worker
+description: Profile pinned to the max reasoning level
+thinking: max
+---
+MAX_THINKING_MARKER
+`,
+	);
+
+	const maxThinkingAgent = await loadAgentByName(
+		"max-thinking",
+		cwd,
+		"project",
+	);
+	assert.ok(maxThinkingAgent, "max thinking profile should load");
+	assert.equal(
+		maxThinkingAgent.thinking,
+		"max",
+		"max must survive agent frontmatter parsing",
+	);
+	assert.match(
+		formatAgentCatalogText([maxThinkingAgent]),
+		/thinking max/,
+	);
+	const maxThinkingArgv = buildPiArgv({
+		agent: "max-thinking",
+		task: "check max thinking argv",
+		cwd,
+		agentDefinition: maxThinkingAgent,
+	});
+	assert.deepEqual(
+		maxThinkingArgv.slice(
+			maxThinkingArgv.indexOf("--thinking"),
+			maxThinkingArgv.indexOf("--thinking") + 2,
+		),
+		["--thinking", "max"],
+		"max must reach the headless child argv",
+	);
+
 	const agent = await loadAgentByName("review.security", cwd, "project");
 	assert.ok(agent, "project agent should load by dotted path alias");
 	assert.equal(agent.name, "security-reviewer");

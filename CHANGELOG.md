@@ -9,6 +9,11 @@
 
 ### Fixed
 
+- Honor Pi's `max` thinking/reasoning level. Run options, agent profile
+  frontmatter, and `model:thinking` suffixes previously rejected `max` as an
+  unsupported level, or silently dropped it when it came from an agent profile,
+  because validation stopped at `xhigh`. `max` is now accepted everywhere
+  `THINKING_LEVELS` applies.
 - Temporarily pin the sandbox runtime's Forge dependency to upstream security
   fix commit `ceba34402e329f0365134f23fe19898756527d65` for Git-source installs.
   Document npm's root-only override scope for dependency consumers.
