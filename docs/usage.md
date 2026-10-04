@@ -588,7 +588,7 @@ thinking | thinkingLevel | reasoningLevel
 Supported thinking levels:
 
 ```text
-off | minimal | low | medium | high | xhigh
+off | minimal | low | medium | high | xhigh | max
 ```
 
 These options may also be set per task in `tasks[]`.

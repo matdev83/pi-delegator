@@ -73,6 +73,32 @@ assert.equal(validation.input.captureToolCalls, true);
 assert.equal(validation.input.runsDir, ".pi/custom-runs");
 assert.equal(validation.input.correlationId, "corr_contracts");
 
+const maxThinkingValidation = validateResolveInput({
+	agent: "worker",
+	task: "inspect",
+	thinking: "max",
+});
+assert.equal(maxThinkingValidation.ok, true);
+assert.equal(maxThinkingValidation.input.thinking, "max");
+
+const maxReasoningAliasValidation = validateResolveInput({
+	mode: "parallel",
+	tasks: [{ agent: "worker", task: "a", reasoningLevel: "max" }],
+});
+assert.equal(maxReasoningAliasValidation.ok, true);
+assert.equal(maxReasoningAliasValidation.input.tasks[0].thinking, "max");
+
+const unsupportedThinkingValidation = validateResolveInput({
+	agent: "worker",
+	task: "inspect",
+	thinking: "maximum",
+});
+assert.equal(unsupportedThinkingValidation.ok, false);
+assert.match(
+	unsupportedThinkingValidation.failure.error,
+	/supported thinking levels are .*max/,
+);
+
 const sessionIdValidation = validateResolveInput({
 	agent: "worker",
 	task: "inspect",

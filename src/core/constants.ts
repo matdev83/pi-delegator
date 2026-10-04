@@ -49,6 +49,7 @@ export const THINKING_LEVELS = [
 	"medium",
 	"high",
 	"xhigh",
+	"max",
 ] as const;
 export const DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 15 * 60;
 /** Idle time before the inline backend sends a session finish probe; 0 disables it. */
