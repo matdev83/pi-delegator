@@ -15,7 +15,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createJiti } from "jiti";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -142,7 +142,8 @@ assert.equal(piSdkRootFromEnv({ [SDK_ROOT_ENV]: "   " }), undefined);
 assert.equal(piSdkRootFromEnv({}), undefined);
 cases.push("env override precedence");
 
-const tempRoot = await mkdtemp(join(tmpdir(), "pi-delegator-sdk-"));
+// Windows CI exposes TEMP through an 8.3 alias; discovery returns real paths.
+const tempRoot = await realpath(await mkdtemp(join(tmpdir(), "pi-delegator-sdk-")));
 try {
 	const foreignScript = resolve("test/checks/pi-sdk-resolution.mjs");
 	const emptyDir = join(tempRoot, "empty-path");
