@@ -189,6 +189,12 @@ export interface ResolveInput {
 	sessionId?: string;
 	/** Pi session id of the parent that launched this run. Injected from ctx, not a model-settable tool arg. */
 	parentSessionId?: string;
+	/**
+	 * `provider/id` of the model the parent Pi session is running. Injected from
+	 * ctx, not a model-settable tool arg, and only used when neither the call
+	 * nor the agent profile names a model.
+	 */
+	hostModel?: string;
 }
 
 export interface ResolveSuccess {

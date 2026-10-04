@@ -1,277 +1,299 @@
 # pi-delegator
 
-**Cross-platform subagent delegation runtime for Pi.**
+**Delegate tasks to subagent workers in [Pi](https://pi.dev) — run them in parallel, in the background, or in isolated sandboxes.**
 
 [![CI](https://github.com/matdev83/pi-delegator/actions/workflows/ci.yml/badge.svg)](https://github.com/matdev83/pi-delegator/actions/workflows/ci.yml)
 
-`pi-delegator` adds one focused tool, `subagent`, plus lifecycle commands and live TUI observability. It supports isolated worker runs, parallel fan-out, sandbox/worktree controls, durable artifacts, async execution, native Windows workers, and visible Herdr or tmux backends.
+---
 
-This is an independently maintained derivative of [AgwaB/pi-subagent](https://github.com/AgwaB/pi-subagent), based on upstream `v0.4.8`. It is not affiliated with or endorsed by the original project. See [NOTICE.md](./NOTICE.md) for provenance and attribution.
+## TL;DR
 
-Package repository: [`matdev83/pi-delegator`](https://github.com/matdev83/pi-delegator)
+`pi-delegator` adds a subagent delegation runtime to Pi. Instead of doing everything sequentially in your main conversation, you can ask Pi to spin up **subagent workers** — separate, lightweight sessions that work on tasks independently.
 
-## Screenshot
+- ⚡ **Parallel execution** — fan out multiple tasks simultaneously and aggregate the results
+- ⏳ **Background / async runs** — launch long-running tasks in the background and continue chatting
+- 🔒 **Sandboxed execution** — run untrusted code or tests with strict network and filesystem boundaries
+- 🌿 **Git worktrees** — give each worker its own isolated branch and working copy so parallel edits never collide
+- 📊 **Live observability** — monitor worker status in real time with an interactive TUI panel or pop-up watch modal
+- 💻 **Cross-platform** — full support for Linux, macOS, and native Windows
 
-`/subagent watch` displaying a worker's live session output:
-
-![pi-delegator live subagent watch modal](./assets/subagent-demo.png)
-
-## Installation
-
-### Install from GitHub
-
-The package is currently distributed from GitHub, so no npm account is needed:
+Install with one command:
 
 ```bash
 pi install git:github.com/matdev83/pi-delegator
 ```
 
-Pi clones the public repository, installs its package dependencies, and loads
-the declared extension after reload. This uses Pi's supported Git package
-source format. Track the current default branch explicitly with:
+![pi-delegator live subagent watch modal](./assets/subagent-demo.png)
+*Live subagent watch modal showing real-time output and status.*
+
+---
+
+## Installation
+
+### Requirements
+
+| Requirement | Supported version | Notes |
+|---|---|---|
+| **Pi** | v1.x (`1.*`) | Upstream Pi harness v1 series required |
+| **Node.js** | `>= 22.19.0` | Runtime environment for Pi and extensions |
+
+**Backward compatibility with pre-v1 Pi releases will not be maintained.**
+Upgrade to the Pi v1.x series before installing or updating this plugin.
+
+SDK selection preserves the live harness for inline runs and pins a disk-backed
+SDK for detached workers. Standalone API callers prefer their installed runtime
+SDK over global `PATH` discovery. For relocated or compiled/embedded hosts without
+a discoverable matching disk installation, set `PI_DELEGATOR_SDK_ROOT` to the
+matching SDK package root. See [Pi SDK resolution](./docs/usage.md#pi-sdk-resolution)
+for precedence, CLI selection, and Windows MSYS-path support.
+
+### Install the plugin
+
+Run the following command inside your terminal:
+
+```bash
+pi install git:github.com/matdev83/pi-delegator
+```
+
+Then **reload Pi** (run `/reload` or restart your session) to activate the extension.
+
+To track the default branch explicitly:
 
 ```bash
 pi install git:github.com/matdev83/pi-delegator@main
 ```
 
-For reproducible deployments, replace `main` with a release tag or commit
-after one has been published.
+For pinned, reproducible installations, replace `@main` with a release tag (e.g. `@v0.1.0`) or a specific commit hash.
 
-When the npm package becomes available, the equivalent npm installation will
-be:
+> [!NOTE]
+> The package is currently distributed via GitHub, so no npm account or setup is required.
+> When the package is published to the public registry, installation via npm will also be supported:
+> ```bash
+> pi install npm:pi-delegator
+> ```
 
-```bash
-pi install npm:pi-delegator
-```
+### Platform support
 
-Then reload Pi.
+| Platform | Out of the box | Visible live workers |
+|---|---|---|
+| **Linux / macOS** | Supported (`inline`, `headless`) | Supported via **`tmux`** (ensure `tmux` is on your `PATH`) |
+| **Windows (native)** | Supported (`inline`, `headless`) | Supported via **`herdr`** (see below) |
+| **Windows (WSL2)** | Supported | Supported via **`tmux`** inside the WSL2 environment |
 
-Requires Node.js `>=22.19.0`.
+#### Windows: visible workers with Herdr
 
-Platform support:
+Native Windows runs using the `inline` and `headless` backends work out of the box with zero external dependencies.
 
-- **Linux / macOS** — fully supported. Visible workers use `tmux` (must be installed and on `PATH`).
-- **Windows (native)** — `inline` and `headless` backends work out of the box. Visible workers use **`herdr`** ([herdr.dev](https://herdr.dev), a terminal workspace manager for coding agents) instead of tmux; request them with `backend: "herdr"` (or `visible: true` together with `backend: "herdr"`). The `tmux` backend is not available on native Windows; WSL2 is an option if you prefer tmux.
-
-### Windows prerequisite: install Herdr manually
-
-Herdr is a separate runtime dependency for visible native-Windows workers. Its
-Windows build is currently preview beta, and `pi-delegator` does not install
-it automatically. The simplest installation command recommended by the
-[Herdr project](https://github.com/herdrdev/herdr) is:
+If you want **visible interactive workers** on native Windows, install **[Herdr](https://herdr.dev)** (a terminal workspace manager built for agentic workflows):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
 ```
 
-Restart the terminal after installation if `herdr` is not found on `PATH`.
-Verify the binary and server before starting a visible worker:
+Restart your terminal if necessary, then verify that Herdr is installed and the server is running:
 
 ```powershell
 herdr --version
 herdr status
 ```
 
-If no server is running, start or attach to one in a separate terminal with
-`herdr`, then retry the subagent run. The extension performs the same
-`herdr status` preflight, with a five-second timeout, before launching a
-Herdr worker. If the binary is missing or the server is unreachable, the run
-fails with guidance to install/start Herdr or choose `backend: "headless"`.
-
-See Herdr’s [installation](https://herdr.dev/docs/install/) and
-[Windows beta](https://herdr.dev/docs/windows-beta/) documentation for
-platform limitations and updates.
-
-Do not install `pi-delegator` alongside another extension that registers the `subagent` tool or `/subagent` commands. Remove or disable the other extension first, then reload Pi.
-
-For local development, add this package as a Pi extension source and reload Pi.
+If `herdr status` reports no running server, launch one by running `herdr` in a separate terminal. For troubleshooting and beta details, consult the [Herdr installation guide](https://herdr.dev/docs/install/).
 
 ### Migrating from `@agwab/pi-subagent`
 
-Remove the original package before installing `pi-delegator`; both extensions register the same `subagent` tool and `/subagent` command namespace. Existing run artifacts and the historical `.pi-subagent-worktrees` directory remain readable. New configuration should use `PI_DELEGATOR_*` environment variables; the previous `PI_SUBAGENT_*` names remain accepted as fallback aliases.
+If you have the legacy `@agwab/pi-subagent` package installed, **remove or disable it** before installing `pi-delegator`. Both extensions register the `subagent` tool and `/subagent` slash command namespace.
 
-## Quick usage
+Your existing run history, logs, and `.pi-subagent-worktrees` directories remain intact and readable. New configuration should use `PI_DELEGATOR_*` environment variables (legacy `PI_SUBAGENT_*` variables remain supported as fallbacks).
 
-Use it when you want Pi to spin up a separate worker instead of doing everything in the parent session:
+---
 
-```text
-Run three reviewers in parallel for this change.
-```
+## How to use
 
-```text
-Run this check in a sandboxed worker and report the artifact paths.
-```
+Once installed, Pi automatically knows how to delegate tasks using the `subagent` tool whenever appropriate. You can simply prompt Pi in natural language:
 
-```text
-Start a background audit and let me inspect it in /subagent panel.
-```
+### Prompt examples
 
-## What it does
+- **Single delegated task:**
+  ```text
+  Review this git diff for potential security vulnerabilities using a subagent.
+  ```
+- **Parallel fan-out:**
+  ```text
+  Run three reviewers in parallel for this PR:
+  1. Security audit
+  2. Performance & memory benchmarks
+  3. Unit test coverage gaps
+  ```
+- **Background / asynchronous work:**
+  ```text
+  Start a background audit of the dependencies and notify me when it finishes.
+  ```
+- **Isolated sandbox execution:**
+  ```text
+  Run the test suite in a sandboxed worker with no network access and report the artifacts.
+  ```
+- **Worktree isolation for code changes:**
+  ```text
+  Implement the refactor in an isolated git worktree so my current working tree isn't modified.
+  ```
 
-Tool: `subagent`
+---
 
-### Backends
+## Slash commands & shortcuts
 
-Workers run in one of four backends:
+`pi-delegator` provides a dedicated `/subagent` command family to manage, inspect, and interact with running workers:
 
-| Backend | Platforms | Visible | Notes |
-|---------|-----------|---------|-------|
-| `inline` (default) | all | no | In-process SDK session; no child process |
-| `headless` | all | no | Spawns a `pi --mode json` child process |
-| `tmux` | Linux / macOS | yes | Worker runs in a detached tmux session |
-| `herdr` | Windows, Linux, macOS | yes | Worker runs in a herdr workspace/pane |
+| Command | Description | When to use |
+|---|---|---|
+| `/subagent panel` | Opens the full-screen interactive TUI dashboard. | Use whenever you want an overview of active runs, elapsed times, historical attempts, and recent logs. |
+| `/subagent watch [number\|runId]` | Opens a live modal watching a worker's streaming output. | Use to inspect what a specific worker is currently doing (e.g. `/subagent watch 1` for worker #1). Press `q` or `Esc` to exit. |
+| `/subagent kill [runId]` | Cancels an active subagent run. | Use to abort a runaway worker. If only one worker is active, the `runId` argument is optional. |
+| `/subagent kill all` | Cancels all active workers in the current session. | Emergency stop to terminate all running subagents at once. |
+| `/subagent enable` | Enables the `subagent` tool for the current session. | Re-enables subagent capabilities if previously disabled (enabled by default). |
+| `/subagent disable` | Hides the `subagent` tool from the model. | Use when you want Pi to solve everything directly without delegating to subagents. |
 
-`backend` defaults to `auto`: `visible` → `tmux`, `sandbox` → `headless`, otherwise `inline`. Pass `backend` explicitly to force one. On native Windows, `herdr` is the only visible backend:
+### Keyboard shortcuts
 
-```json
-{
-  "backend": "herdr",
-  "agent": "worker",
-  "task": "Run the tests and report the results."
-}
-```
+While focused on Pi's message input box:
 
-The result envelope reports `herdr: { workspaceId, tabId, paneId }` for herdr runs. Requires the `herdr` CLI and a running Herdr server.
-
-### Sandbox
-
-Run workers in an isolated local execution boundary.
-
-```json
-{
-  "sandbox": true,
-  "agent": "checker",
-  "task": "Run a local check and report the artifact paths."
-}
-```
-
-`sandbox: true` denies all network access. Model-backed sandboxed runs must allow their provider endpoint explicitly:
-
-```json
-{
-  "sandbox": { "allowedDomains": ["api.anthropic.com"] },
-  "agent": "implementer",
-  "task": "Make the requested local change and run the checks."
-}
-```
-
-### Worktree
-
-Isolate parallel or mutating tasks in managed git worktrees. Workspaces default to shared; request `worktree: true` explicitly for tasks that mutate files in parallel.
-
-```json
-{
-  "worktree": true,
-  "agent": "implementer",
-  "task": "Make the requested local change in an isolated worktree."
-}
-```
-
-### Agent
-
-Inject Pi subagent markdown definitions from global or project agent directories.
-
-```json
-{
-  "agent": "reviewer-security",
-  "task": "Review the current diff for security risks."
-}
-```
-
-Agent markdown can live in `~/.pi/agent/agents/*.md` or `.pi/agents/*.md`. Agent-level `tools` declarations are an authority ceiling; call-level `tools` can narrow them but not expand them. A `systemPrompt` override replaces the agent prompt body, not the agent's frontmatter policy.
-
-### Type
-
-Use one structured schema for single, parallel, async, and existing-run calls. `action` defaults to `run`. Each execution is a run; each launch is an attempt.
-
-Single:
-
-```json
-{
-  "agent": "reviewer",
-  "task": "Review the current diff and summarize the highest-risk issues."
-}
-```
-
-Parallel launches independent runs concurrently:
-
-```json
-{
-  "tasks": [
-    { "agent": "reviewer-security", "task": "Review the current diff for security risks." },
-    { "agent": "reviewer-performance", "task": "Review the current diff for performance risks." },
-    { "agent": "reviewer-test-coverage", "task": "Review the current diff for missing tests." }
-  ]
-}
-```
-
-Existing run:
-
-```json
-{ "action": "status", "runId": "run_..." }
-```
-
-Recent runs can be addressed by `runId` even when they were launched from another cwd; legacy records still resolve from the explicit or current cwd.
-
-Runs have a 15-minute inactivity guard by default. It resets when the worker
-produces transcript, tool, output, or process activity. Set
-`inactivityTimeoutSeconds: 0` to opt out; this is independent of the code API's
-optional general `timeoutMs` limit.
-
-Inline-backend runs also probe idle sessions (default 5 minutes, `recoveryInactivitySeconds`
-to change, `0` to disable). The probe asks the session whether it has remaining tasks and
-expects the finish marker `"I HAVE FULLY FINISHED ALL TASKS FROM THIS SESSION"` (matched
-fuzzily). A marker reply completes the run successfully; a session that resumes operations
-keeps the tool call open; no reaction within 3 minutes flags the session dead with the same
-`timeout` failure as the 15-minute guard. Other backends ignore the option.
-
-### Panel
-
-Inspect runs, attempts, artifacts, and log tails in a live TUI. The panel defaults to the current Pi session, can switch to current cwd or all indexed runs, and includes status filters plus a scrollable detail pane. It shows active and recent terminal runs by default, with in-panel `m` to show more, and counts stale/malformed run pointers without exposing raw session ids.
-
-Open the run monitor:
-
-```text
-/subagent panel
-```
-
-### Commands
-
-| Command | Purpose |
+| Shortcut | Action |
 |---|---|
-| `/subagent enable` | Expose the `subagent` tool to the LLM for the current session. |
-| `/subagent disable` | Hide the `subagent` tool from the LLM for the current session. |
-| `/subagent panel` | Open the full-screen, filterable run monitor. |
-| `/subagent watch [number|runId]` | Open a current-session subagent by stable number or run ID in a live modal. |
-| `/subagent kill [runId]` | Kill the only active run or a specified run. |
-| `/subagent kill all` | Kill all active runs in the current Pi session. |
+| `Alt+Shift+1` … `Alt+Shift+9` | Instantly open the watch modal for worker `#1` through `#9` |
+| `Ctrl+Shift+1` … `Ctrl+Shift+9` | Fallback shortcut for terminals that capture or block `Alt+Shift` |
+| `Ctrl+Shift+U` | Jump directly to the most recently active worker |
 
-The watch modal also has keyboard shortcuts for stable session numbers `#1` through `#9`:
-`Alt+Shift+1` … `Alt+Shift+9`, with `Ctrl+Shift+1` … `Ctrl+Shift+9` as a fallback.
+---
 
-### Live progress
+## Subagent modes (backends)
 
-While a subagent runs, the tool row in the transcript shows live progress (elapsed time and the last output line, refreshed every second) instead of staying static until completion. Works for sync, async, headless, and herdr runs.
+Every worker runs inside an execution backend. You can let Pi pick automatically or request a specific backend in your prompt.
 
-### Watch a run
+### Comparison at a glance
 
-`/subagent watch <number>` opens the matching stable subagent number; `/subagent watch <runId>` opens a specific run ID from the current Pi session. A missing or malformed target produces a warning without opening a modal. `Alt+Shift+1` … `Alt+Shift+9` (and `Ctrl+Shift+1` … `Ctrl+Shift+9` as a fallback) open the matching stable number. `#1` is the first run, `#2` the next, and numbers keep rising. Tool rows display the same number after `subagent`; a parallel call displays its allocated range. The modal shows status, elapsed time, last activity, task text, and a live tail of the run's output. `Ctrl+Shift+U` opens the latest run. `↑`/`↓`/`j`/`k` scroll, `q`/`esc` close. Shortcuts fire only while the input editor is focused.
+| Backend | Process model | Visible terminal? | Sandboxing? | Platforms | Best for |
+|---|---|---|---|---|---|
+| **`inline`** (default) | Current Pi process | ❌ No | ❌ No | All | Fast, lightweight tasks where startup latency matters |
+| **`headless`** | Child process (`pi --mode json`) | ❌ No | ✅ Yes | All | Sandboxed runs, heavy tasks, or extension-provided models |
+| **`tmux`** | Detached `tmux` session | ✅ Yes | ✅ Yes | Linux, macOS | Interactive oversight when you want to watch the terminal |
+| **`herdr`** | Managed `herdr` workspace pane | ✅ Yes | ✅ Yes | Windows, Linux, macOS | Live terminal visibility on Windows, or multi-pane terminal setups |
 
-## Code API
+---
 
-Orchestrators can use the same runtime directly:
+### Detailed backend guide & hints
 
-```ts
-import { runSubagent, getSubagentStatus } from "pi-delegator/api";
+#### 1. `inline` — Fast in-process execution
 
-const run = await runSubagent({ agent: "reviewer", task: "Review this diff.", async: true });
-const status = await getSubagentStatus({ runId: run.runId });
+The `inline` backend runs synchronous subagents inside the existing Pi process using the Pi SDK.
+
+With `async: true`, a detached Node worker owns the inline SDK session. It avoids
+a separate Pi CLI process, but still requires a child worker process.
+
+- **Pros:** Synchronous runs avoid process-spawning overhead.
+- **Trade-offs:** Runs without OS-level sandboxing; terminal output is captured but not displayed in an external window.
+- 💡 **Hint:** Ideal for quick reviews, code explanations, small generation tasks, and read-only queries where speed is the priority.
+
+#### 2. `headless` — Isolated background process
+
+The `headless` backend spawns an independent background Pi process running in JSON mode.
+
+- **Pros:** Full process isolation; supports OS sandboxing; automatically loads ambient Pi extensions and skills (essential if your LLM provider is registered via a custom extension, such as Cursor ACP).
+- **Trade-offs:** Slightly higher startup latency than `inline`.
+- 💡 **Hint:** Use this whenever you enable sandboxing, run untrusted shell commands, or use custom model providers from third-party extensions.
+
+#### 3. `tmux` — Live terminal session (Linux & macOS)
+
+The `tmux` backend launches the worker inside a detached `tmux` window or session.
+
+- **Pros:** Full visual feedback — you can attach to the session or view streaming progress live via `/subagent watch`.
+- **Trade-offs:** Requires `tmux` installed; not available on native Windows (unless using WSL2).
+- 💡 **Hint:** Choose this when executing complex build steps, interactive test suites, or long tasks where you want to watch output as it streams.
+
+#### 4. `herdr` — Terminal workspace manager (Windows & cross-platform)
+
+The `herdr` backend orchestrates workers within [Herdr](https://herdr.dev) tabs and panes.
+
+- **Pros:** The premier visible backend for native Windows; provides structured multi-pane session management on Windows, Linux, and macOS.
+- **Trade-offs:** Requires the external `herdr` CLI tool and a running Herdr server.
+- 💡 **Hint:** The recommended choice if you are on Windows and want live visible workers, or if you prefer Herdr's agent-oriented workspace layout over tmux.
+
+---
+
+### Automatic backend selection
+
+When you don't explicitly specify a backend, `pi-delegator` automatically chooses the best one:
+
+| Scenario / Prompt request | Chosen backend |
+|---|---|
+| Requesting live visibility (`visible: true`) | `tmux`; on native Windows, explicitly request `backend: "herdr"` |
+| Requesting a sandbox (`sandbox: true` or *"sandboxed"*) | `headless` |
+| Standard task delegation | `inline` |
+
+To override automatic selection, simply specify your preference:
+```text
+Run the benchmark script using the headless backend in an isolated worktree.
 ```
 
-## Detailed docs
+---
 
-- [`docs/usage.md`](./docs/usage.md) — full argument reference, code API, `action` behavior, backend selection, sandbox/worktree behavior, artifacts, and validation notes.
+## Core features
 
-## Attribution
+### 🔒 Sandbox isolation
 
-`pi-delegator` contains software originally developed for [`@agwab/pi-subagent`](https://github.com/AgwaB/pi-subagent) by AgwaB and distributed under the MIT License. The original copyright and license notice are retained in [LICENSE](./LICENSE). Subsequent cross-platform, lifecycle, observability, backend, and UX work is maintained independently by `matdev83`.
+Workers can execute inside an OS-level sandbox with restricted permissions. By default, sandboxed workers have **no network access**.
+
+If your task needs access to specific APIs (such as the model provider's endpoint or a package registry), you can specify allowed domains:
+
+```text
+Run this task in a sandboxed worker, allowing outbound access only to api.anthropic.com and registry.npmjs.org.
+```
+
+### 🌿 Git worktrees
+
+When running multiple mutating workers concurrently, asking them to write to the same working directory can cause race conditions and merge conflicts.
+
+Enabling `worktree: true` instructs the plugin to provision a temporary, dedicated Git worktree for each worker. When the task completes, results and patches are cleanly reported.
+
+```text
+Run two implementation approaches in parallel, each in its own git worktree.
+```
+
+### 👥 Custom agent profiles
+
+Define specialized worker roles with markdown profiles stored in:
+- Global agents: `~/.pi/agent/agents/*.md`
+- Project agents: `.pi/agents/*.md`
+
+Profiles can define custom system prompts, tool ceilings, and default models:
+
+An explicit call/task `model` wins over the profile model. If neither names a
+model, Pi tool runs inherit the parent session's current model, including
+agentless, parallel, and async runs. Standalone API calls without a parent model
+retain SDK/settings defaults unless a model is supplied.
+
+Inline sessions use their own model runtime: inheriting a model identifier does
+not transfer extension-provided provider registration or credentials. Empty-output
+errors identify the selected model and suggest a built-in authenticated provider
+or the `headless` backend, which can load provider extensions in a child Pi process.
+
+```text
+Delegate the API security review to the security-auditor agent.
+```
+
+### ⏱️ Inactivity guards & timeouts
+
+To prevent forgotten or stalled background tasks from running indefinitely, workers include a **15-minute inactivity watchdog**. If a worker produces no tool calls, logs, or process activity for 15 minutes, it is cleanly halted.
+
+---
+
+## Further documentation
+
+For orchestrators, code integration, and deep configuration options:
+- [Usage Reference & Developer API](./docs/usage.md) — complete reference of schema arguments, TypeScript SDK methods (`runSubagent`, `getSubagentStatus`), artifact paths, and environment variables.
+- [Project Attribution & Provenance](./NOTICE.md) — upstream history and acknowledgments.
+- [Changelog](./CHANGELOG.md) — release notes and version history.
+
+---
+
+## Attribution & License
+
+`pi-delegator` is an independently maintained derivative of [`@agwab/pi-subagent`](https://github.com/AgwaB/pi-subagent) by AgwaB (based on upstream `v0.4.8`), released under the [MIT License](./LICENSE). It is not affiliated with or endorsed by the original upstream project.

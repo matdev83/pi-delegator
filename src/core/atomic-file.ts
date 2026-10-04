@@ -1,4 +1,4 @@
-import { rename } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
 
 const WINDOWS_RENAME_RETRY_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 const DEFAULT_RETRIES = 20;
@@ -24,6 +24,39 @@ function retryableWindowsRename(error: unknown, platform: NodeJS.Platform): bool
 
 function sleep(milliseconds: number): Promise<void> {
 	return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
+}
+
+let tempSequence = 0;
+
+/**
+ * Collision-free scratch path for an atomic write.
+ *
+ * Two writers in one process can reach the same `Date.now()` millisecond (a
+ * terminal interrupt writes the same artifact the cancelled runner is already
+ * finalising). A `pid + timestamp` name then aliases, the first rename consumes
+ * the scratch file, and the second rename fails with ENOENT — losing the
+ * terminal commit entirely. The per-process sequence keeps every scratch name
+ * distinct while still being stable enough for post-mortem inspection.
+ */
+export function atomicTempPath(path: string): string {
+	tempSequence = (tempSequence + 1) % Number.MAX_SAFE_INTEGER;
+	return `${path}.${process.pid}.${Date.now()}.${tempSequence}.tmp`;
+}
+
+/** Write `content` to `path` through a uniquely named scratch file + rename. */
+export async function atomicWriteFile(
+	path: string,
+	content: string,
+	options: RenameWithRetryOptions = {},
+): Promise<void> {
+	const tempPath = atomicTempPath(path);
+	await writeFile(tempPath, content);
+	try {
+		await renameWithRetry(tempPath, path, options);
+	} catch (error) {
+		await rm(tempPath, { force: true }).catch(() => undefined);
+		throw error;
+	}
 }
 
 /**

@@ -21,6 +21,7 @@ import type {
 	SubagentTaskInput,
 } from "../core/constants.ts";
 import { resolveBackend } from "../core/resolver.ts";
+import { harnessSdkEnv } from "../runners/pi-sdk.ts";
 import {
 	DEFAULT_PARALLEL_CONCURRENCY,
 	MAX_PARALLEL_CONCURRENCY,
@@ -76,6 +77,7 @@ function mergeTaskInput(
 		runsDir: parent.runsDir,
 		correlationId: parent.correlationId,
 		parentSessionId: parent.parentSessionId,
+		hostModel: parent.hostModel,
 	};
 }
 
@@ -337,6 +339,10 @@ export async function startAsyncSubagentRun(
 			detached: true,
 			windowsHide: process.platform === "win32",
 			stdio: ["ignore", workerLogFd, workerLogFd],
+			// Pin the harness SDK: the worker is a plain node process with no
+			// access to the host's virtualised module graph, so without this it
+			// would load the plugin's nested (stale) peer copy instead.
+			env: harnessSdkEnv(),
 		});
 	} finally {
 		closeSync(workerLogFd);

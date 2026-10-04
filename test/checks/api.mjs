@@ -204,15 +204,18 @@ try {
 	// The completion monitor polls waitForRun at 500ms before writing the
 	// completion field, so this loop must tolerate far more than one monitor
 	// cycle. A tight window (2s) races the monitor under CI/CPU load and
-	// flakes; 120 x 50ms = 6s covers ~12 monitor cycles.
-	for (let index = 0; index < 120; index += 1) {
+	// flakes; 120 x 50ms = 6s covers ~12 monitor cycles. That is still not enough
+	// on a heavily loaded machine, where one process scheduling slice can take
+	// seconds: `notified` is a lifecycle guarantee with no latency SLA, so poll
+	// on the signal with a generous deadline instead of a tight budget.
+	for (let index = 0; index < 600; index += 1) {
 		failedStatus = await getSubagentStatus({
 			cwd,
 			runId: failedStart.runId,
 			attemptId: failedStart.attemptId,
 		});
 		if (failedStatus?.completion?.notified) break;
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	assert.equal(failedStatus?.metadata.contextLengthExceeded, false);
 	assert.equal(

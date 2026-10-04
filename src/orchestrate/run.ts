@@ -354,6 +354,7 @@ export async function runSubagentTask(
 			agentScope: input.agentScope,
 			confirmProjectAgents: input.confirmProjectAgents,
 			model: input.model,
+			hostModel: input.hostModel,
 			thinking: input.thinking,
 			tools: effectiveTools,
 			systemPrompt: input.systemPrompt,

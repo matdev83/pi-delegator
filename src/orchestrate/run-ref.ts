@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { renameWithRetry } from "../core/atomic-file.ts";
+import { atomicWriteFile } from "../core/atomic-file.ts";
 import { readDelegatorEnv } from "../core/env.ts";
 import { assertSafeId } from "../core/identifiers.ts";
 
@@ -165,9 +165,7 @@ export async function writeRunLocator(
 	};
 	const path = runLocatorPath(options.runId);
 	await mkdir(dirname(path), { recursive: true });
-	const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-	await writeFile(tempPath, `${JSON.stringify(locator, null, 2)}\n`);
-	await renameWithRetry(tempPath, path);
+	await atomicWriteFile(path, `${JSON.stringify(locator, null, 2)}\n`);
 }
 
 export async function readRunLocator(

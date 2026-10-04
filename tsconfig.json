@@ -9,9 +9,6 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "paths": {
-      "@earendil-works/pi-tui": ["./node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"]
-    },
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true
   },

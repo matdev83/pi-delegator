@@ -1,8 +1,5 @@
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
 import { buildAgentSystemPrompt, type AgentDefinition } from "../agents.ts";
 import {
 	createAttemptArtifactStore,
@@ -39,6 +36,14 @@ import {
 	matchesSessionFinishMarker,
 	SESSION_FINISH_PROMPT,
 } from "./session-finish-marker.ts";
+import {
+	importPiSdk,
+	type AgentSessionLike,
+	type ModelLike,
+	type ModelRuntimeLike,
+	type PiSdkModule,
+	type ResourceLoaderLike,
+} from "./pi-sdk.ts";
 
 export interface RunInlineModelOptions {
 	agent: string;
@@ -60,6 +65,12 @@ export interface RunInlineModelOptions {
 	signal?: AbortSignal;
 	workspace?: Partial<ResultWorkspace>;
 	model?: string;
+	/**
+	 * `provider/id` inherited from the parent Pi session. Consulted only when
+	 * neither `model` nor the agent profile names one, so an agentless run
+	 * inherits a model the parent has already proven usable.
+	 */
+	hostModel?: string;
 	thinking?: ThinkingLevel;
 	tools?: string[];
 	systemPrompt?: string;
@@ -69,84 +80,9 @@ export interface RunInlineModelOptions {
 	agentDefinition?: AgentDefinition;
 }
 
-interface ResourceLoaderLike {
-	reload(options?: unknown): Promise<void>;
-}
-
-interface DefaultResourceLoaderOptionsLike {
-	cwd: string;
-	agentDir: string;
-	additionalExtensionPaths?: string[];
-	additionalSkillPaths?: string[];
-	noExtensions?: boolean;
-	noSkills?: boolean;
-	noPromptTemplates?: boolean;
-	noThemes?: boolean;
-	noContextFiles?: boolean;
-	systemPromptOverride?: (base: string | undefined) => string | undefined;
-	appendSystemPromptOverride?: (base: string[]) => string[];
-}
-
-interface PiSdkModule {
-	SessionManager: { inMemory(cwd?: string): unknown };
-	DefaultResourceLoader: new (
-		options: DefaultResourceLoaderOptionsLike,
-	) => ResourceLoaderLike;
-	getAgentDir: () => string;
-	ModelRuntime: {
-		create(options?: Record<string, unknown>): Promise<ModelRuntimeLike>;
-	};
-	SettingsManager: {
-		create(cwd?: string, agentDir?: string): SettingsManagerLike;
-	};
-	resolveModelScopeWithDiagnostics(
-		patterns: string[],
-		modelRuntime: ModelRuntimeLike,
-		options?: Record<string, unknown>,
-	): Promise<ResolveModelScopeResultLike>;
-	createAgentSession(
-		options: Record<string, unknown>,
-	): Promise<{ session: AgentSessionLike }>;
-}
-
-interface ModelLike {
-	provider?: string;
-	id?: string;
-}
-
-interface ModelRuntimeLike {
-	getAvailable?: () => ModelLike[];
-	getModels?: () => ModelLike[];
-	getModel?: (provider: string, modelId: string) => ModelLike | undefined;
-}
-
-interface SettingsManagerLike {
-	getDefaultProvider?: () => string | undefined;
-	getDefaultModel?: () => string | undefined;
-}
-
-interface ResolveModelScopeResultLike {
-	scopedModels: Array<{
-		model: ModelLike;
-		thinkingLevel?: ThinkingLevel;
-	}>;
-	diagnostics?: Array<{ message?: string }>;
-}
-
-interface AgentSessionLike {
-	prompt(text: string): Promise<void>;
-	subscribe?: (listener: (event: unknown) => void) => () => void;
-	abort?: () => Promise<void>;
-	dispose?: () => void;
-	messages?: unknown[];
-}
-
-interface SdkImportResult {
-	module: PiSdkModule;
-	source: string;
-}
-
-function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
+function normalizeTimeoutMs(
+	timeoutMs: number | undefined,
+): number | undefined {
 	if (timeoutMs === undefined) return undefined;
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
 		throw new Error(
@@ -154,115 +90,6 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
 		);
 	}
 	return timeoutMs;
-}
-
-function findPackageRoot(
-	startPath: string,
-	packageName: string,
-): string | undefined {
-	let current = fs.statSync(startPath).isDirectory()
-		? startPath
-		: dirname(startPath);
-	while (current !== dirname(current)) {
-		const packageJsonPath = join(current, "package.json");
-		if (fs.existsSync(packageJsonPath)) {
-			try {
-				const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
-					name?: unknown;
-				};
-				if (parsed.name === packageName) return current;
-			} catch {
-				// Keep walking.
-			}
-		}
-		current = dirname(current);
-	}
-	return undefined;
-}
-
-// Normalize MSYS/Git-Bash style paths (/c/Users/...) to Windows drive paths
-// (C:/Users/...) so native Node fs calls work when pi is launched from bash.
-function normalizeHostPath(p: string): string {
-	if (process.platform !== "win32") return p;
-	const m = /^\/[a-zA-Z]\//.exec(p);
-	if (m) return `${m[0][1].toUpperCase()}:${p.slice(2)}`;
-	return p;
-}
-
-async function importPiSdk(): Promise<SdkImportResult> {
-	// Primary: bare ESM import. When loaded as a pi extension the loader
-	// aliases/virtualizes this specifier to the live SDK, so this works on
-	// any platform (npm .cmd shims, MSYS paths, pnpm shims, ...).
-	try {
-		const module = (await import(
-			"@earendil-works/pi-coding-agent",
-		)) as unknown as PiSdkModule;
-		return { module, source: "runtime" };
-	} catch (projectError) {
-		// Fallback: locate the SDK on disk from a pi entry point. Prefer the
-		// cli script that is actually running us (process.argv[1]); otherwise
-		// resolve pi via `where` (Windows) / `which` (POSIX).
-		let piEntry: string | undefined;
-		try {
-			const currentScript = process.argv[1];
-			if (currentScript && fs.existsSync(currentScript)) {
-				piEntry = currentScript;
-			}
-		} catch {
-			/* ignore */
-		}
-		if (piEntry === undefined) {
-			try {
-				const found = execFileSync(
-					process.platform === "win32" ? "where" : "which",
-					["pi"],
-					{ encoding: "utf8" },
-				)
-					.trim()
-					.split(/\r?\n/)[0];
-				if (found.length > 0) piEntry = found;
-			} catch {
-				/* fall through */
-			}
-		}
-		if (piEntry === undefined) {
-			const message =
-				projectError instanceof Error
-					? projectError.message
-					: String(projectError);
-			throw new Error(
-				`Could not import @earendil-works/pi-coding-agent and could not find pi on PATH. Project import error: ${message}`,
-			);
-		}
-
-		const realPiEntry = fs.realpathSync(normalizeHostPath(piEntry));
-		// Walk up from the entry (cli.js resolves to the package root); also
-		// check a sibling node_modules for shim-style installs (npm on Windows).
-		const siblingPkg = join(
-			dirname(realPiEntry),
-			"node_modules",
-			"@earendil-works",
-			"pi-coding-agent",
-		);
-		const siblingValid =
-			fs.existsSync(join(siblingPkg, "package.json")) &&
-			JSON.parse(
-				fs.readFileSync(join(siblingPkg, "package.json"), "utf8"),
-			).name === "@earendil-works/pi-coding-agent";
-		const packageRoot =
-			findPackageRoot(realPiEntry, "@earendil-works/pi-coding-agent") ??
-			(siblingValid ? siblingPkg : undefined);
-		if (!packageRoot)
-			throw new Error(
-				`Found pi at ${realPiEntry}, but could not locate @earendil-works/pi-coding-agent.`,
-			);
-		return {
-			module: (await import(
-				pathToFileURL(join(packageRoot, "dist/index.js")).href
-			)) as PiSdkModule,
-			source: packageRoot,
-		};
-	}
 }
 
 function textFromContent(content: unknown): string {
@@ -673,6 +500,7 @@ export async function runInlineModel(
 	let stderrText = "";
 	let outputText = "";
 	let failureKind: FailureKind | null = null;
+	let selectedModelRef: string | undefined;
 	let toolCallArtifactRefs: ArtifactRef[] = [];
 	const toolCallTelemetry =
 		options.captureToolCalls === true
@@ -693,7 +521,10 @@ export async function runInlineModel(
 		const sessionManager = piSdk.SessionManager.inMemory(cwd);
 		const resourceLoader = createChildResourceLoader(piSdk, options, cwd);
 		await resourceLoader.reload();
-		const requestedModel = options.model ?? options.agentDefinition?.model;
+		const requestedModel =
+			options.model ??
+			options.agentDefinition?.model ??
+			options.hostModel;
 		const requestedThinking =
 			options.thinking ?? options.agentDefinition?.thinking;
 		const configuredModel =
@@ -713,6 +544,7 @@ export async function runInlineModel(
 			);
 			model = resolved.model;
 			modelThinking = resolved.thinkingLevel;
+			selectedModelRef = `${model.provider ?? "?"}/${model.id ?? "?"}`;
 		}
 		const tools = options.tools ?? options.agentDefinition?.tools;
 
@@ -785,7 +617,13 @@ export async function runInlineModel(
 
 	if (failureKind === null && outputText.length === 0) {
 		failureKind = "model";
-		stderrText += "Inline SDK session completed without assistant output.\n";
+		// The SDK reports an unusable provider credential as an assistant turn
+		// with no content, so the run reaches this point with no error text at
+		// all. Name the model that was actually used and the one workaround that
+		// exists, otherwise the caller only sees an unexplained empty result.
+		stderrText += `Inline SDK session completed without assistant output${
+			selectedModelRef === undefined ? "" : ` for model ${selectedModelRef}`
+		}. The inline backend builds its own model runtime and cannot authenticate providers registered by a Pi extension; pass an explicit model backed by auth.json, or use backend: "headless" so the child loads ambient extensions first.\n`;
 	}
 
 	toolCallArtifactRefs = await flushToolCallTelemetry(toolCallTelemetry, store);
