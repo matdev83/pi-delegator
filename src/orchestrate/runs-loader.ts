@@ -44,6 +44,8 @@ export interface TaskRow {
 export interface RunRow {
 	key: string;
 	runId: string;
+	/** Optional human-readable session title; absent until title generation settles. */
+	title?: string;
 	sourceCwd: string;
 	runsDir: string;
 	status: Status;
@@ -186,6 +188,7 @@ export interface RegistryTaskRecord {
 export interface RegistryRunRecord {
 	runId: string;
 	mode?: string;
+	title?: string;
 	status: Status;
 	backend?: string;
 	dependency?: string | null;
@@ -438,6 +441,7 @@ export async function readRunFromRegistry(
 				.slice(-LOG_TAIL_LINES)
 		: [];
 	const childSummary = summarizeChildEvents(parseRunEvents(eventsText));
+	const registryTitle = sanitizeRunText(registry.title ?? "").trim();
 	const records = registry.attempts ?? registry.tasks ?? [];
 	const tasks = await Promise.all(
 		records.map((task) =>
@@ -450,6 +454,7 @@ export async function readRunFromRegistry(
 	return {
 		key: runKey(cwd, runsDir, registry.runId),
 		runId: registry.runId,
+		...(registryTitle === undefined ? {} : { title: registryTitle }),
 		sourceCwd: cwd,
 		runsDir,
 		status: registry.status ?? aggregateRunStatus(tasks),

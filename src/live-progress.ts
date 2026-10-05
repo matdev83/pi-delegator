@@ -27,6 +27,8 @@ export interface LiveProgress {
 	completedAt: number | null;
 	lastActivityAt: number;
 	lastLine: string;
+	/** Optional human-readable session title; absent until title generation settles. */
+	title?: string;
 	/** Stable launch number(s) within the parent Pi session. */
 	sessionOrdinal?: number;
 	sessionOrdinals?: number[];
@@ -51,6 +53,7 @@ interface ScannedRun {
 	startedAt: number;
 	completedAt: number | null;
 	latestAttemptId: string | null;
+	title?: string;
 	sessionOrdinal?: number;
 }
 
@@ -368,6 +371,24 @@ async function scanRuns(cwd: string): Promise<ScannedRun[]> {
 	return runs;
 }
 
+/** Bounded title length; titles are annotation, not transcript. */
+const TITLE_MAX = 60;
+
+/**
+ * Read an optional run title out of a registry record. Titles are produced by
+ * an auxiliary model, so they are treated as untrusted text: control characters
+ * are stripped and the value is clipped before it can reach a UI row.
+ */
+function titleFromRecord(record: Record<string, unknown>): string | undefined {
+	if (typeof record.title !== "string") return undefined;
+	const title = record.title
+		.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (title.length === 0) return undefined;
+	return title.length > TITLE_MAX ? title.slice(0, TITLE_MAX).trim() : title;
+}
+
 async function readRun(cwd: string, runId: string): Promise<ScannedRun | undefined> {
 	const raw = await readJson(join(cwd, RUNS_DIR, runId, "run.json"));
 	if (raw === null || typeof raw !== "object") return undefined;
@@ -396,6 +417,7 @@ function scannedRunFromRecord(
 			typeof record.latestAttemptId === "string"
 				? record.latestAttemptId
 				: null,
+		title: titleFromRecord(record),
 		sessionOrdinal:
 			typeof record.sessionOrdinal === "number" &&
 			Number.isInteger(record.sessionOrdinal) &&
@@ -466,6 +488,7 @@ async function buildProgress(
 		runId: run.runId,
 		attemptId,
 		backend: run.backend,
+		...(run.title === undefined ? {} : { title: run.title }),
 		status,
 		startedAt: run.startedAt,
 		completedAt,
@@ -501,8 +524,10 @@ function aggregateProgress(progresses: LiveProgress[]): LiveProgress {
 		)
 		.filter((value, index, values) => values.indexOf(value) === index)
 		.sort((a, b) => a - b);
+	const title = progresses.find((progress) => progress.title !== undefined)?.title;
 	return {
 		...first,
+		...(title === undefined ? {} : { title }),
 		status,
 		startedAt: Math.min(...progresses.map((progress) => progress.startedAt)),
 		completedAt: allTerminal

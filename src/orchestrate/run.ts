@@ -33,6 +33,7 @@ import {
 	type ResolvedWorkspace,
 } from "../workspace/worktree.ts";
 import { writeRunLocator } from "./run-ref.ts";
+import { scheduleSessionTitle } from "./session-title.ts";
 
 export const DEFAULT_PARALLEL_CONCURRENCY = 4;
 export const MAX_PARALLEL_TASKS = 12;
@@ -271,6 +272,14 @@ export async function runSubagentTask(
 	} catch {
 		// Progress binding must never change the subagent outcome.
 	}
+	// Naming the session is auxiliary work: it is requested in the background
+	// from the dispatch text and never awaited here, so a slow, missing, or
+	// failing title model cannot delay or fail the worker.
+	void scheduleSessionTitle({
+		ref: runRef,
+		dispatch: input.task,
+		agent: input.agent,
+	});
 	await writeRunLocator({
 		...runRef,
 		parentSessionId: input.parentSessionId,

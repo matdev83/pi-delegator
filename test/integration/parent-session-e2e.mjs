@@ -9,6 +9,11 @@ import { join } from "node:path";
 import { runSubagentTask } from "../../src/orchestrate/run.ts";
 import { runPaths } from "../../src/artifacts/index.ts";
 
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
+
 const tempRoot = await mkdtemp(join(tmpdir(), "pi-subagent-parent-e2e-"));
 try {
   const cwd = join(tempRoot, "workspace");

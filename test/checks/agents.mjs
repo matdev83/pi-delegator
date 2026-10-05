@@ -13,6 +13,11 @@ import {
 	formatAgentCatalogText,
 } from "../../src/catalog.ts";
 
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
+
 const jiti = createJiti(import.meta.url, {
 	interopDefault: true,
 	moduleCache: false,

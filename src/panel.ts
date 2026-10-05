@@ -428,12 +428,18 @@ export class SubagentPanel implements Component {
 						: " ";
 				const status = runStatusLabel(run);
 				const age = fmtAge(run.updatedMs);
+				// Titles are the human-readable label; run ids stay available in the
+				// detail pane for runs that have not been titled (yet).
+				const label =
+					run.title === undefined || run.title.length === 0
+						? run.runId
+						: run.title;
 				const cwdLabel = showCwd
 					? ` · ${basename(run.sourceCwd) || run.sourceCwd}`
 					: "";
 				const fullMeta = `${age}${cwdLabel}`;
 				const statusWidth = Math.max(4, Math.min(13, status.length));
-				const fullIdWidth = visibleLength(run.runId);
+				const fullIdWidth = visibleLength(label);
 				let metaWidth = visibleLength(fullMeta);
 				let idWidth = width - statusWidth - metaWidth - 4;
 				if (showCwd && idWidth < fullIdWidth) {
@@ -445,7 +451,7 @@ export class SubagentPanel implements Component {
 				}
 				idWidth = Math.max(6, idWidth);
 				const meta = clip(fullMeta, metaWidth);
-				const line = `${marker} ${pad(clip(run.runId, idWidth), idWidth)} ${style(this.theme, runStatusColor(run), pad(status, statusWidth))} ${style(this.theme, "muted", meta)}`;
+				const line = `${marker} ${pad(clip(label, idWidth), idWidth)} ${style(this.theme, runStatusColor(run), pad(status, statusWidth))} ${style(this.theme, "muted", meta)}`;
 				return clip(line, width);
 			});
 	}
@@ -507,6 +513,8 @@ export class SubagentPanel implements Component {
 
 		section("RUN");
 		field("Run ID", run.runId, "text");
+		if (run.title !== undefined && run.title.length > 0)
+			field("Title", run.title, "text");
 		field("Status", runStatusDetail(run), runStatusColor(run));
 		field("Elapsed", fmtElapsed(run.startedAt, run.completedAt));
 		field("Updated", fmtAge(run.updatedMs));

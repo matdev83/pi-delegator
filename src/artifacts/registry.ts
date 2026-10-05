@@ -43,6 +43,7 @@ export type RunEventType =
 	| "run.cancelled"
 	| "run.interrupt_requested"
 	| "run.mark_background"
+	| "run.titled"
 	| "child.started"
 	| "child.updated"
 	| "child.completed"
@@ -92,9 +93,16 @@ export interface RunAttemptRecord {
 	herdr?: ResultHerdrMetadata;
 }
 
+/** Where a run title came from: the auxiliary model, or the dispatch proxy. */
+export type RunTitleSource = "model" | "dispatch";
+
 export interface RunRecord {
 	schemaVersion: typeof RUN_RECORD_SCHEMA_VERSION;
 	runId: string;
+	/** Optional human-readable session title; absent until title generation settles. */
+	title?: string;
+	titleSource?: RunTitleSource;
+	titleModel?: string;
 	correlationId?: string;
 	/** Pi session id of the parent session that launched this run. */
 	parentSessionId?: string;
@@ -1047,6 +1055,54 @@ async function finishAttemptFromResultUnlocked(
 		latestAttemptId: result.attemptId,
 		attempts: sortAttempts(attempts),
 	};
+}
+
+export interface SetRunTitleOptions extends RunRef {
+	title: string;
+	source: RunTitleSource;
+	model?: string;
+}
+
+/**
+ * Attach a human-readable session title to a run record and announce it.
+ *
+ * Titles settle long after a run started, because generation is an auxiliary
+ * background request. This therefore only annotates the record (under the run
+ * lock) and never touches status, attempts, or artifact bookkeeping. A blank
+ * title is a caller bug rather than a transient condition, so it throws
+ * instead of being silently dropped.
+ */
+export async function setRunTitle(
+	options: SetRunTitleOptions,
+): Promise<RunRecord> {
+	const title = options.title.replace(/\s+/g, " ").trim();
+	if (title.length === 0) throw new Error("run title must not be blank.");
+	const record = await withRunMutation<RunRecord>(options, async (existing, paths) => {
+		if (existing === null)
+			throw new Error(`No run found with id: ${options.runId}`);
+		const next: RunRecord = {
+			...existing,
+			title,
+			titleSource: options.source,
+			...(options.model === undefined
+				? {}
+				: { titleModel: options.model }),
+			updatedAt: new Date().toISOString(),
+			cwd: paths.cwd,
+			runsDir: toSafeRelativePath(paths.cwd, paths.runsDir),
+		};
+		return { record: next, value: next };
+	});
+	await appendRunEvent(options, {
+		type: "run.titled",
+		message: title,
+		data: {
+			title,
+			source: options.source,
+			...(options.model === undefined ? {} : { model: options.model }),
+		},
+	}).catch(() => undefined);
+	return record;
 }
 
 export async function setRunDependency(

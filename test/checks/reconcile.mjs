@@ -5,8 +5,7 @@ import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { rmTree } from "./rm-tree.mjs";
-import { promisify } from "node:util";
+import { rmTree } from "./rm-tree.mjs";import { promisify } from "node:util";
 import {
 	beginRunRecord,
 	createAttemptArtifactStore,
@@ -14,6 +13,12 @@ import {
 } from "../../src/artifacts/index.ts";
 import { reconcileSubagentRun } from "../../src/orchestrate/reconcile.ts";
 import { getSubagentStatus, waitForSubagent } from "../../api.mjs";
+
+
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
 
 const execFileAsync = promisify(execFile);
 const tempRoot = await mkdtemp(join(tmpdir(), "pi-subagent-reconcile-"));

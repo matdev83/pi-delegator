@@ -380,6 +380,7 @@ async function loadRunProgress(
 		lastActivityAt,
 		lastLine: clip(sanitize(lastLine), 90),
 		task: clip(sanitize(task), 90),
+		...(runTitle(record) === undefined ? {} : { title: runTitle(record) }),
 		// Keep the bounded tail intact. The modal wraps lines to its actual
 		// viewport width; clipping here permanently loses useful output.
 		outputTail: outputTail.map((line) => sanitize(line)),
@@ -395,6 +396,14 @@ async function loadRunProgress(
 				? record.sessionOrdinal
 				: undefined,
 	};
+}
+
+/** Optional session title stored on a run record, sanitized and bounded. */
+function runTitle(record: Record<string, unknown>): string | undefined {
+	if (typeof record.title !== "string") return undefined;
+	const title = sanitize(record.title);
+	if (title.length === 0) return undefined;
+	return title.length > 60 ? title.slice(0, 60).trim() : title;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -767,12 +776,16 @@ export class SubagentWatch implements Component {
 					: "warning";
 		const title = `${bold(this.theme, `subagent #${this.number}`)} ${style(this.theme, "muted", run.backend)}`;
 		const status = style(this.theme, statusColor, run.status);
+		const sessionTitle =
+			run.title === undefined || run.title.length === 0
+				? ""
+				: ` · ${style(this.theme, "text", run.title)}`;
 		const elapsed =
 			run.completedAt !== null && run.completedAt > 0
 				? fmtDuration(run.completedAt - run.startedAt)
 				: fmtDuration(nowMs() - run.startedAt);
 		lines.push(borderLine("top"));
-		lines.push(frameLine(`${title} · ${status} · ${elapsed} · ${run.runId}`));
+		lines.push(frameLine(`${title}${sessionTitle} · ${status} · ${elapsed} · ${run.runId}`));
 		const activity = `last activity ${fmtAge(run.lastActivityAt)} · attempt ${run.attemptId ?? "—"} · ${run.backend || "?"} backend`;
 		lines.push(frameLine(style(this.theme, "muted", activity)));
 		lines.push(ruleLine());

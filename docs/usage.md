@@ -139,7 +139,7 @@ lists runs recorded under the current working directory, while:
 { "action": "runs", "scope": "all" }
 ```
 
-lists runs located through the global run index across all directories. Each entry includes the `runId` (plus `status`, `backend`, `startedAt`, `task`, and `lastLine` for session/cwd scopes, or `cwd` and locator metadata for the `all` scope). Use `limit` to cap the result size. Each returned `runId` can then be passed to `status`, `logs`, `wait`, or `interrupt`.
+lists runs located through the global run index across all directories. Each entry includes the `runId` (plus `status`, `backend`, `startedAt`, `task`, `lastLine`, and, once known, the session `title` for session/cwd scopes, or `cwd` and locator metadata for the `all` scope). Use `limit` to cap the result size. Each returned `runId` can then be passed to `status`, `logs`, `wait`, or `interrupt`.
 
 Parent orchestrators may record descendant state with `recordSubagentChildEvent`, which appends `child.*` events to the parent run's `events.jsonl` (`child.started`, `child.failed`, `child.completed`, or `child.cancelled`). Event data may include `childRunId` (or legacy aliases `childId` / `descendantRunId`), `workflowRunId`, `taskId`, and `failureKind`. `status` and `/subagent panel` aggregate those into `childSummary`, including failure counts, active child run IDs, and the latest currently failed/cancelled child. This keeps parent status distinct from descendant failures and makes retry attempts distinguishable from newly-started child work.
 
@@ -306,6 +306,17 @@ Interrupt a process-backed run:
 ```
 
 `interrupt` is conservative. It can signal runs with registered process metadata. Unsupported or already-terminal runs return explicit status rather than pretending cancellation succeeded.
+
+Cancellation is escalatable: the requested signal first, then `SIGTERM` after
+`escalateAfterMs` and `SIGKILL` after `killAfterMs`. A detached worker installs
+its signal handlers only after Node boots and the plugin loads, so a signal that
+lands in that startup window is captured and applied as soon as the worker is
+ready. If the worker is gone entirely — killed before it could react, or already
+exited — the interrupt path records the cancellation itself, so an interrupted
+run always reaches a terminal `cancelled` state instead of hanging in `running`.
+When a worker does react in time, its own result wins and the interrupt path
+writes nothing.
+
 
 ### Dependency security
 
@@ -664,6 +675,59 @@ Stale or malformed locators are counted in the header and skipped. Active runs w
 
 The panel is for human inspection; existing-run tool actions remain the programmatic interface.
 
+## Session titles
+
+Subagent sessions are named automatically so a run can be recognized without
+reading its dispatch text. When a run starts, `pi-delegator` issues one
+auxiliary request to a lightweight model, asking for a short, distinctive title
+for that session:
+
+```text
+subagent #3 · Fix flaky retry in queue worker
+```
+
+The title is stored on the run record (`run.json` `title`, `titleSource`,
+`titleModel`) and announced as a `run.titled` event. It is shown in:
+
+- the active subagent tool row (replacing the raw task text once known),
+- the run list and detail pane of `/subagent panel` (the run id stays available
+  for runs without a title),
+- the `/subagent watch` modal header,
+- `action: "runs"` output, where each titled entry carries a `title` field.
+
+### Fail-open behavior
+
+The request is **background work**: it is never awaited by the dispatch path, so
+a slow, unreachable, or misconfigured title model cannot delay or fail a
+subagent. It is bounded by `PI_DELEGATOR_TITLE_TIMEOUT_MS`. Every failure path
+degrades to a failover title built from the first six words of the dispatch
+text, which is recorded with `titleSource: "dispatch"`:
+
+| Condition | Result |
+|---|---|
+| Feature disabled | No title is written |
+| Dispatch without task text | No title is written |
+| Model not found / not authenticated / provider error | First six dispatch words |
+| Timeout | First six dispatch words |
+| Unusable model response (empty, blank, multi-line commentary) | First six dispatch words |
+| Run record missing or unwritable | Title outcome is discarded; the run is untouched |
+
+In-flight requests are aborted on session shutdown.
+
+### Configuration
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `PI_DELEGATOR_TITLE` | enabled | `off`, `false`, `0`, `no`, or `disabled` disables automatic titles; `on`, `true`, `1`, `yes`, and `enabled` force them on. |
+| `PI_DELEGATOR_TITLE_MODEL` | `openrouter/free` | Model reference (`provider/id`, or a Pi model pattern) used for title generation. The default is a free-model router, so titles cost nothing on most setups. |
+| `PI_DELEGATOR_TITLE_TIMEOUT_MS` | `15000` | Timeout for the auxiliary request, clamped to 250–120000 ms. |
+
+The model must be resolvable by the Pi SDK with credentials configured for its
+provider. Legacy `PI_SUBAGENT_*` spellings remain accepted as lower-priority
+aliases.
+
+---
+
 ## Live progress
 
 While a subagent tool call is executing (or after an async run has been launched), the TUI tool row shows live progress instead of staying static:
@@ -679,6 +743,10 @@ The progress suffix is polled from the run artifacts (`.pi/agent/runs/<run>/atte
 - the terminal outcome once the run finishes (`done in …`, `failed after …`)
 
 Only runs in the tool call's working directory are considered, matched by start-time recency; when several subagent calls run concurrently each call is matched to the next unmatched run in start order.
+
+Once [session titles](#session-titles) settle, the row shows the generated title
+instead of the raw task text.
+
 
 ## Watching a run (keyboard shortcuts)
 

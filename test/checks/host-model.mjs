@@ -18,6 +18,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createJiti } from "jiti";
 
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
+
 // The tool definition pulls in src/panel.ts, which uses TypeScript parameter
 // properties that Node's strip-only loader rejects; jiti compiles it instead.
 const jiti = createJiti(import.meta.url, {

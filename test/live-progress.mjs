@@ -33,6 +33,7 @@ function writeRunRecord(
 	updatedAt = new Date().toISOString(),
 	targetStartedAt = startedAt,
 	sessionOrdinal,
+	title,
 ) {
 	const targetRunDir = join(runsDir, targetRunId);
 	mkdirSync(join(targetRunDir, "attempts", targetAttemptId), { recursive: true });
@@ -50,11 +51,17 @@ function writeRunRecord(
 			latestAttemptId: targetAttemptId,
 			attempts: [],
 			...(sessionOrdinal === undefined ? {} : { sessionOrdinal }),
+			...(title === undefined ? {} : { title }),
 		}),
 	);
 }
-function writeRun(status, completedAt = null, updatedAt = new Date().toISOString()) {
-	writeRunRecord(runId, attemptId, status, completedAt, updatedAt);
+function writeRun(
+	status,
+	completedAt = null,
+	updatedAt = new Date().toISOString(),
+	title = "Refactor auth token refresh",
+) {
+	writeRunRecord(runId, attemptId, status, completedAt, updatedAt, undefined, undefined, title);
 }
 writeRun("running");
 writeFileSync(
@@ -71,6 +78,7 @@ await sleep(3200);
 let progress = lp.getProgress("tool-call-1");
 check("running run matched by recency", progress?.runId === runId, JSON.stringify(progress?.runId));
 check("status running", progress?.status === "running");
+check("session title surfaced", progress?.title === "Refactor auth token refresh", progress?.title);
 check("lastLine parsed from event text", progress?.lastLine === "ok (1.234s)", progress?.lastLine);
 check("lastActivityAt updated", (progress?.lastActivityAt ?? 0) > Date.now() - 60000);
 check("invalidate called at least once", invalidations >= 1, String(invalidations));

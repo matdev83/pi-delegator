@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createJiti } from "jiti";
 
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
+
 async function loadExtension() {
 	const jiti = createJiti(import.meta.url, {
 		interopDefault: true,
@@ -55,11 +60,15 @@ function displayWidth(text) {
 	return width;
 }
 
+// Panel data is refreshed on a 1.5s timer, and a refresh already in flight when
+// the test changes a filter is skipped, so the next settled render can take two
+// poll intervals plus the load. A 2s budget made these waits flaky on loaded
+// machines without ever shortening them on an idle one.
 async function waitFor(predicate, label) {
-	const deadline = Date.now() + 2_000;
+	const deadline = Date.now() + 10_000;
 	let last;
 	while (Date.now() < deadline) {
-		last = predicate();
+		last = await predicate();
 		if (last) return last;
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
@@ -141,6 +150,7 @@ async function writeIndexedRun(indexDir, cwd, runId, attemptId, options) {
 			{
 				schemaVersion: 2,
 				runId,
+				...(options.title === undefined ? {} : { title: options.title }),
 				...(options.parentSessionId
 					? { parentSessionId: options.parentSessionId }
 					: {}),
@@ -338,6 +348,61 @@ async function main() {
 			latestAttemptId: numberedAttemptId,
 			attempts: [],
 		}),
+	);
+
+	// Automatic session titles reach the active tool row as soon as the run
+	// record carries one, replacing the verbose dispatch text.
+	const titledRowCwd = await mkdtemp(
+		join(tmpdir(), "pi-delegator-titled-row-"),
+	);
+	await mkdir(join(titledRowCwd, ".pi/agent/runs/run_titled_row/attempts/attempt-1"), {
+		recursive: true,
+	});
+	await writeFile(
+		join(titledRowCwd, ".pi/agent/runs/run_titled_row/run.json"),
+		`${JSON.stringify({
+			schemaVersion: 2,
+			runId: "run_titled_row",
+			mode: "single",
+			status: "running",
+			backend: "inline",
+			title: "Refactor auth token refresh",
+			sessionOrdinal: 6,
+			startedAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			completedAt: null,
+			latestAttemptId: "attempt-1",
+			attempts: [],
+		})}\n`,
+	);
+	const titledRowComponent = registeredTool.renderCall(
+		{ agent: "worker", task: "Refactor the auth module" },
+		callTheme,
+		{
+			toolCallId: "tool-call-titled-row",
+			cwd: titledRowCwd,
+			invalidate() {},
+		},
+	);
+	await waitFor(
+		() =>
+			renderText(titledRowComponent).includes("Refactor auth token refresh"),
+		"session title in active tool row",
+	);
+	assert.match(
+		renderText(titledRowComponent),
+		/subagent #6 run · single · worker · Refactor auth token refresh/,
+		"the session title replaces the raw dispatch text in the tool row",
+	);
+	registeredTool.renderResult(
+		{
+			content: [{ type: "text", text: '{"status":"completed"}' }],
+			details: undefined,
+			isError: false,
+		},
+		{ expanded: false, isPartial: false },
+		callTheme,
+		{ toolCallId: "tool-call-titled-row" },
 	);
 	const numberedComponent = registeredTool.renderCall(
 		{ agent: "worker", task: "Verify stable numbering" },
@@ -1106,6 +1171,48 @@ async function main() {
 		await writeFile(join(indexDir, "bad.json"), "{not-json\n");
 		await mkdir(join(indexDir, "nested"));
 
+		// Automatic session titles: a titled run is listed by its human-readable
+		// label, and the raw run id stays reachable in the detail pane.
+		const titledIndex = join(tempRoot, "titled-index");
+		const titledCwd = join(tempRoot, "titled-workspace");
+		const titledSessionId = "session-titled";
+		process.env.PI_SUBAGENT_RUN_INDEX_DIR = titledIndex;
+		await writeIndexedRun(titledIndex, titledCwd, "run_titled", "attempt-1", {
+			status: "running",
+			backend: "headless",
+			parentSessionId: titledSessionId,
+			title: "Refactor auth token refresh",
+			log: "titled run output",
+			resultMtime: new Date(fixedPanelNow - 1_000),
+		});
+		const titledPanel = await runCommand("panel", {
+			cwd: titledCwd,
+			sessionManager: { getSessionId: () => titledSessionId },
+		});
+		assert.ok(titledPanel.component, "titled panel should open");
+		await waitFor(
+			() =>
+				renderText(titledPanel.component).includes("Refactor auth token refresh"),
+			"titled run render",
+		);
+		const titledText = renderText(titledPanel.component);
+		assert.match(
+			titledText,
+			/^▸ Refactor auth token refresh/m,
+			"a titled run is listed by its session title",
+		);
+		assert.match(
+			titledText,
+			/Title[^\n]*Refactor auth token refresh/,
+			"the detail pane exposes the session title",
+		);
+		assert.match(
+			titledText,
+			/Run ID[^\n]*run_titled/,
+			"the run id stays available for untitled lookup",
+		);
+		titledPanel.component.handleInput("q");
+		process.env.PI_SUBAGENT_RUN_INDEX_DIR = indexDir;
 		const scoped = await runCommand("panel", {
 			sessionManager: { getSessionId: () => sessionId },
 		});
@@ -1224,12 +1331,14 @@ async function main() {
 			`${JSON.stringify({ schemaVersion: 1, runId: "run_prune_old", cwd: join(tempRoot, "missing-pruned"), updatedAt: new Date(fixedPanelNow - 60_000).toISOString() }, null, 2)}\n`,
 		);
 		scoped.component.handleInput("r");
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		const pruned = await listRunLocators();
-		assert.ok(
-			!pruned.locators.some((locator) => locator.runId === "run_prune_old"),
-			"old missing locator should be pruned from the global index",
-		);
+		// Pruning happens while the panel reads the locator index, so wait for
+		// the outcome instead of assuming a fixed delay is long enough.
+		await waitFor(async () => {
+			const pruned = await listRunLocators();
+			return !pruned.locators.some(
+				(locator) => locator.runId === "run_prune_old",
+			);
+		}, "old missing locator pruned from the global index");
 		if (oldPruneAfter === undefined)
 			delete process.env.PI_SUBAGENT_RUN_LOCATOR_PRUNE_AFTER_MS;
 		else process.env.PI_SUBAGENT_RUN_LOCATOR_PRUNE_AFTER_MS = oldPruneAfter;

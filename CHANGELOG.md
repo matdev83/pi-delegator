@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- Automatic, human-readable session titles. Each subagent run is now named from
+  its first dispatch by a lightweight auxiliary model request, shown in the live
+  tool row, the `/subagent panel` run list and detail pane, the watch modal
+  header, and `action: "runs"` output. The request runs in the background and
+  never blocks a dispatch: an unknown model, provider error, timeout, or
+  unusable response falls back to the first six words of the dispatch text
+  (`titleSource: "dispatch"`). Titles are stored on the run record and announced
+  as a `run.titled` event. Configure with `PI_DELEGATOR_TITLE` (enable/disable,
+  default enabled), `PI_DELEGATOR_TITLE_MODEL` (default `openrouter/free`), and
+  `PI_DELEGATOR_TITLE_TIMEOUT_MS` (default `15000`); legacy `PI_SUBAGENT_*`
+  aliases remain accepted.
+
 ### Changed
 
 - Target Pi harness v1.x only. Backward compatibility with pre-v1 releases will
@@ -9,6 +23,18 @@
 
 ### Fixed
 
+- Interrupted durable (`async`) runs no longer stay `running` forever. The
+  detached worker installs its SIGINT/SIGTERM handlers only after Node boots and
+  jiti loads the plugin (roughly a second). A signal inside that window hit the
+  default disposition and killed the worker before it could write a result, so
+  `wait`, the panel, and `/subagent kill` all reported a timeout until someone
+  ran `action:"reconcile"`. The worker now captures signals during bootstrap and
+  replays them once cancellation is possible, and the interrupt path settles the
+  attempt itself when it escalates to SIGKILL or finds the worker already gone.
+  Whichever side commits the terminal result first wins; a late worker write is
+  ignored instead of emitting stale-result noise. Terminal-envelope writing is
+  now shared by the worker and the interrupt path
+  (`src/orchestrate/terminal-attempt.ts`).
 - Make `check:panel` deterministic. The panel orders runs by result-file mtime, but
   the fixture seeded runs with real wall-clock writes, so filesystem timestamp
   granularity decided which runs tied and therefore where rows landed. Runs that

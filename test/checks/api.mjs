@@ -17,6 +17,11 @@ import {
 import { createAttemptArtifactStore } from "../../src/artifacts/index.ts";
 import { startAsyncSubagentRun } from "../../src/orchestrate/async.ts";
 
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
+
 assert.equal(pkg.exports["./api"].default, "./api.mjs");
 assert.equal(pkg.exports["./api"].types, "./src/api.ts");
 assert.equal(typeof runSubagent, "function");

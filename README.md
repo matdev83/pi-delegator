@@ -298,6 +298,28 @@ Delegate the API security review to the security-auditor agent.
 
 To prevent forgotten or stalled background tasks from running indefinitely, workers include a **15-minute inactivity watchdog**. If a worker produces no tool calls, logs, or process activity for 15 minutes, it is cleanly halted.
 
+
+### 🏷️ Automatic session titles
+
+Every subagent session can be given a short, human-readable title derived from
+its first dispatch: `subagent #3 · Fix flaky retry in queue worker`. The title
+appears in the live tool row, the run list of `/subagent panel`, the watch
+modal, and in `action: "runs"` output.
+
+The title is produced by a lightweight auxiliary model request that runs **in
+the background** and never blocks or fails a dispatch. It is fail-open: an
+unavailable model, a provider error, a timeout, or an unusable response falls
+back to the first six words of the dispatch text.
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `PI_DELEGATOR_TITLE` | enabled | Set to `off`/`false`/`0`/`no`/`disabled` to disable automatic titles. |
+| `PI_DELEGATOR_TITLE_MODEL` | `openrouter/free` | Model (`provider/id`) used for title generation. |
+| `PI_DELEGATOR_TITLE_TIMEOUT_MS` | `15000` | Bound on the auxiliary request before the dispatch-text failover is used. |
+
+Legacy `PI_SUBAGENT_*` spellings of these variables remain accepted as
+lower-priority aliases.
+
 ---
 
 ## Further documentation

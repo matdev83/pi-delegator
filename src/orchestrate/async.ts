@@ -31,6 +31,7 @@ import {
 	type ParallelRunResult,
 } from "./run.ts";
 import { writeRunLocator } from "./run-ref.ts";
+import { scheduleSessionTitle } from "./session-title.ts";
 import { readRunResult, waitForRun } from "./status.ts";
 
 export interface StartAsyncSubagentRunOptions {
@@ -311,6 +312,18 @@ export async function startAsyncSubagentRun(
 	} catch {
 		// Progress binding must never change the subagent outcome.
 	}
+	// Title generation is background work owned by this process (the detached
+	// worker only owns execution), so the record is named here even when the
+	// run itself outlives the call.
+	void scheduleSessionTitle({
+		ref: {
+			cwd: options.cwd,
+			runId,
+			...(input.runsDir === undefined ? {} : { runsDir: input.runsDir }),
+		},
+		dispatch: input.task,
+		agent: input.agent,
+	});
 	await writeRunLocator({
 		cwd: options.cwd,
 		runsDir: input.runsDir,
