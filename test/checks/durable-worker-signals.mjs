@@ -8,6 +8,12 @@
 // forever: every wait timed out and only a manual reconcile could recover it.
 // The worker now captures signals during bootstrap and applies them as soon as
 // the cancellation machinery is ready.
+//
+// Platform note: Windows cannot deliver POSIX signals to a detached worker, so
+// an interrupt there is cooperative - the marker file is polled by the worker
+// after it boots. Both mechanisms install their handler before the worker starts
+// the task, and each case holds the worker in that window with the existing
+// start-delay hook, so the only reachable terminal outcome is the cancellation.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -47,6 +53,9 @@ async function interruptDuringBootstrap(label, options = {}) {
 	await mkdir(cwd, { recursive: true });
 	process.env.PI_DELEGATOR_DURABLE_WORKER_BOOTSTRAP_DELAY_MS =
 		String(options.bootstrapDelayMs ?? 0);
+	// The worker must not reach its task before the cancellation lands, or it
+	// could settle the run by itself and hide what this check is asserting.
+	process.env.PI_DELEGATOR_DURABLE_WORKER_START_DELAY_MS = "10000";
 	try {
 		const started = await startAsyncSubagentRun({
 			cwd,
@@ -82,7 +91,7 @@ async function interruptDuringBootstrap(label, options = {}) {
 		assert.equal(
 			snapshot.status,
 			"cancelled",
-			`${label}: a bootstrap interrupt must cancel the run`,
+			`${label}: a bootstrap interrupt must cancel the run, got ${snapshot.status}`,
 		);
 		assert.equal(
 			snapshot.failureKind,
@@ -92,6 +101,7 @@ async function interruptDuringBootstrap(label, options = {}) {
 		return snapshot;
 	} finally {
 		delete process.env.PI_DELEGATOR_DURABLE_WORKER_BOOTSTRAP_DELAY_MS;
+		delete process.env.PI_DELEGATOR_DURABLE_WORKER_START_DELAY_MS;
 	}
 }
 
