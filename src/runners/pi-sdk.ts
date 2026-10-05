@@ -86,7 +86,30 @@ export interface ModelLike {
 	id?: string;
 }
 
+export interface AssistantMessageLike {
+	role?: string;
+	content?: Array<{ type?: string; text?: string } | null>;
+	stopReason?: string;
+	errorMessage?: string;
+}
+
+export interface CompletionContextLike {
+	systemPrompt?: string;
+	messages: unknown[];
+}
+
+export interface CompletionOptionsLike {
+	maxTokens?: number;
+	temperature?: number;
+	signal?: AbortSignal;
+}
+
 export interface ModelRuntimeLike {
+	completeSimple?: (
+		model: ModelLike,
+		context: CompletionContextLike,
+		options?: CompletionOptionsLike,
+	) => Promise<AssistantMessageLike>;
 	getAvailable?: () => Promise<ModelLike[]>;
 	getModels?: () => ModelLike[];
 	getModel?: (provider: string, modelId: string) => ModelLike | undefined;

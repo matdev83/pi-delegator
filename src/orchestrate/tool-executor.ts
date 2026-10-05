@@ -605,11 +605,19 @@ export function buildSubagentToolDefinition(
 			const widgetOrdinal = isRunAction(args)
 				? widgetOrdinalFor(context?.toolCallId)
 				: undefined;
-			const summary = subagentCallSummary(args);
-			const rest = summary.startsWith("subagent ")
-				? summary.slice("subagent ".length)
-				: summary;
 			const makeBase = (progress: LiveProgress | undefined) => {
+				// Once a session title is known it replaces the verbose dispatch
+				// text; until title generation settles the task text stands in.
+				const summary = subagentCallSummary(
+					progress?.title === undefined || progress.title.length === 0
+						? args
+						: isRecord(args)
+							? { ...args, task: progress.title }
+							: args,
+				);
+				const rest = summary.startsWith("subagent ")
+					? summary.slice("subagent ".length)
+					: summary;
 				const hasPersistedNumber =
 					progress?.sessionOrdinal !== undefined ||
 					(progress?.sessionOrdinals?.length ?? 0) > 0;

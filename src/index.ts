@@ -41,6 +41,7 @@ import { interruptRun } from "./orchestrate/interrupt.ts";
 import { reconcileSubagentRun } from "./orchestrate/reconcile.ts";
 import { getRunLogs, getRunStatus, waitForRun } from "./orchestrate/status.ts";
 import { showSubagentPanel } from "./panel.ts";
+import { abortPendingSessionTitles } from "./orchestrate/session-title.ts";
 
 export default function registerSubagentEngine(pi: ExtensionAPI) {
 	registerSubagentWatchShortcuts(pi);
@@ -65,6 +66,7 @@ export default function registerSubagentEngine(pi: ExtensionAPI) {
 			resetProgress();
 			resetLiveTranscripts();
 			resetWidgetOrdinals();
+			abortPendingSessionTitles();
 		});
 		pi.on("session_start", async (_event, ctx) => {
 			resetWidgetOrdinals();

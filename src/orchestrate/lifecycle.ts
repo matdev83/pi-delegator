@@ -82,6 +82,9 @@ export async function lifecycleAction(
 			);
 			runs = scoped.slice(0, limit).map((run) => ({
 				runId: run.runId,
+				...(run.title === undefined || run.title.length === 0
+					? {}
+					: { title: run.title }),
 				attemptId: run.attemptId,
 				status: run.status,
 				backend: run.backend,

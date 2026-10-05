@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rmTree } from "./rm-tree.mjs";
-import {
+import { rmTree } from "./rm-tree.mjs";import {
 	appendRunEvent,
 	beginRunRecord,
 	commitAttemptResultIfActive,
@@ -21,6 +20,12 @@ import {
 	interruptSubagent,
 	waitForSubagent,
 } from "../../api.mjs";
+
+
+// These checks dispatch real subagent runs. Automatic session titles would
+// issue an auxiliary model request per dispatch, so the feature is switched
+// off here: title behavior is covered hermetically by check:session-titles.
+process.env.PI_DELEGATOR_TITLE = "off";
 
 const cwd = await mkdtemp(join(tmpdir(), "pi-subagent-lifecycle-"));
 try {
