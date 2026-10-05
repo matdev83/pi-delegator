@@ -9,6 +9,11 @@ import {
 	type RunRecord,
 	type RunRef,
 } from "../artifacts/index.ts";
+import {
+	CANCELLED_FAILURE_KIND,
+	commitTerminalAttempt,
+	writeTerminalAttemptArtifacts,
+} from "./terminal-attempt.ts";
 import { resolveRunRef } from "./run-ref.ts";
 import { isTerminalStatus } from "./status.ts";
 
@@ -134,6 +139,64 @@ function runningAttempts(
 	});
 }
 
+/** Grace period before the interrupt path takes over an unreachable worker. */
+const KILL_SETTLE_MS = 150;
+
+function processAlive(pid: number | undefined): boolean {
+	if (pid === undefined || !Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException)?.code === "EPERM";
+	}
+}
+
+/**
+ * Record the cancellation of an attempt whose worker can no longer write it.
+ *
+ * A durable worker installs its signal handlers only after Node boots and
+ * jiti loads the plugin. A run interrupted inside that window dies before it
+ * can write anything, which used to leave the attempt "running" forever: every
+ * wait timed out and only a manual reconcile recovered it. Whoever applied the
+ * fatal signal therefore owns the terminal write. A worker that reacted in
+ * time has already committed, and that result wins untouched.
+ */
+async function finalizeUnreachableAttempt(
+	ref: RunRef,
+	attempt: RunAttemptRecord,
+	options: InterruptRunOptions,
+	signal: NodeJS.Signals,
+): Promise<boolean> {
+	// Give a worker that is mid-write a moment to land its own result first.
+	await new Promise((resolveSleep) => setTimeout(resolveSleep, KILL_SETTLE_MS));
+	const record = await readRunRecord(ref).catch(() => null);
+	if (record === null || isTerminalStatus(record.status)) return false;
+	const current = record.attempts.find(
+		(candidate) => candidate.attemptId === attempt.attemptId,
+	);
+	if (current === undefined) return false;
+	if (current.status !== "running" && current.status !== "pending") return false;
+	const cwd = current.artifactCwd ?? ref.cwd ?? process.cwd();
+	const message =
+		`run interrupted (${options.reason ?? "no reason given"}); worker was ` +
+		`stopped by ${signal} before it could report a result`;
+	const result = await writeTerminalAttemptArtifacts({
+		cwd,
+		runId: ref.runId,
+		attemptId: current.attemptId,
+		runsDir: ref.runsDir,
+		status: "cancelled",
+		failureKind: CANCELLED_FAILURE_KIND,
+		backend: current.backend,
+		startedAt: current.startedAt,
+		correlationId: record.correlationId,
+		signal,
+		message,
+	});
+	return await commitTerminalAttempt(ref, result, message);
+}
+
 async function escalate(
 	options: InterruptRunOptions,
 	signal: NodeJS.Signals,
@@ -141,6 +204,7 @@ async function escalate(
 	const ref = await resolveRunRef(options);
 	const record = await readRunRecord(ref).catch(() => null);
 	if (record === null || isTerminalStatus(record.status)) return;
+	const signalled: RunAttemptRecord[] = [];
 	for (const attempt of runningAttempts(
 		record,
 		options.attemptId ?? options.taskId,
@@ -155,6 +219,7 @@ async function escalate(
 			continue;
 		}
 		sendProcessSignal(attempt, signal);
+		signalled.push(attempt);
 	}
 	await appendRunEvent(ref, {
 		type: "run.interrupt_requested",
@@ -162,6 +227,14 @@ async function escalate(
 		message: `interrupt escalation ${signal}`,
 		data: { signal },
 	}).catch(() => undefined);
+	// SIGKILL cannot be handled, and a worker that is already gone will never
+	// report anything, so the run has to be settled by whoever escalated.
+	for (const attempt of signalled) {
+		if (signal !== "SIGKILL" && processAlive(attempt.process?.pid)) continue;
+		await finalizeUnreachableAttempt(ref, attempt, options, signal).catch(
+			() => undefined,
+		);
+	}
 }
 
 function result(

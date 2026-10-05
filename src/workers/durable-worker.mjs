@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createJiti } from "jiti";
 
 const payloadPath = process.argv[2];
 if (!payloadPath) {
@@ -9,10 +8,45 @@ if (!payloadPath) {
 	process.exit(2);
 }
 
+// Signal bootstrap. Loading jiti and the plugin takes about a second, and
+// until that finishes the worker cannot write a terminal result. A SIGINT or
+// SIGTERM arriving in that window used to hit the default disposition and kill
+// the worker silently, leaving the run "running" forever: every wait timed out
+// and only a manual reconcile recovered it. Capture signals here, before any
+// slow import, and apply them as soon as cancellation is possible.
+let cancelReady = false;
+let pendingSignal = null;
+
+function handleSignal(signal) {
+	if (!cancelReady) {
+		pendingSignal ??= signal;
+		return;
+	}
+	requestCancel(signal);
+}
+
+// `on`, not `once`: a repeated signal during bootstrap must also be captured
+// instead of falling through to the default (fatal) disposition.
+process.on("SIGINT", () => handleSignal("SIGINT"));
+process.on("SIGTERM", () => handleSignal("SIGTERM"));
+
+async function maybeDelayBootstrapForTests() {
+	const delayMs = Number.parseInt(
+		delegatorEnv("DURABLE_WORKER_BOOTSTRAP_DELAY_MS") ?? "0",
+		10,
+	);
+	if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs);
+}
+
+await maybeDelayBootstrapForTests();
+
+// Loaded dynamically so the signal handlers above are installed first.
+const { createJiti } = await import("jiti");
 const jiti = createJiti(import.meta.url, { interopDefault: false });
-const [{ runSubagentTask }, artifacts] = await Promise.all([
+const [{ runSubagentTask }, artifacts, terminal] = await Promise.all([
 	jiti.import("../orchestrate/run.ts"),
 	jiti.import("../artifacts/index.ts"),
+	jiti.import("../orchestrate/terminal-attempt.ts"),
 ]);
 
 const payload = JSON.parse(await readFile(payloadPath, "utf8"));
@@ -92,28 +126,20 @@ async function writeTerminalResultOnce({
 			(existingAttempt.failureKind ?? null) === failureKind;
 		if (existingAttemptTerminal && !shouldBackfillDuplicateResult) return;
 		await maybeDelayTerminalWriteForTests();
-		const store = await artifacts.createAttemptArtifactStore({
+		const result = await terminal.writeTerminalAttemptArtifacts({
 			cwd,
 			runId,
 			attemptId,
 			runsDir: input?.runsDir,
-		});
-		const stderr = await store.writeTextArtifact("stderr", `${message}\n`);
-		const worker = store.refFor("worker");
-		const result = await store.writeResult({
-			backend: payload.backend ?? "headless",
 			status,
 			failureKind,
-			cwd,
+			backend: payload.backend ?? "headless",
 			startedAt: payload.startedAt ?? new Date().toISOString(),
-			completedAt: new Date().toISOString(),
-			workspace: { mode: "shared", cwd },
-			sandbox: { enabled: Boolean(input?.sandbox) },
+			correlationId: input?.correlationId,
 			exitCode,
 			signal,
-			artifacts: [worker, stderr],
-			correlationId: input?.correlationId,
-			metadata: { contextLengthExceeded: false },
+			sandbox: Boolean(input?.sandbox),
+			message,
 		});
 		if (shouldBackfillDuplicateResult) {
 			await artifacts
@@ -121,28 +147,9 @@ async function writeTerminalResultOnce({
 				.catch(() => undefined);
 			return;
 		}
-		const committed = await artifacts
-			.commitAttemptResultIfActive(runRef, result)
-			.catch(() => ({ committed: false }));
-		if (!committed.committed) return;
-		const terminalType = status === "cancelled" ? "cancelled" : "failed";
-		await artifacts
-			.appendRunEvent(runRef, {
-				type: `attempt.${terminalType}`,
-				attemptId,
-				status,
-				message,
-				data: { failureKind, signal, exitCode },
-			})
-			.catch(() => undefined);
-		await artifacts
-			.appendRunEvent(runRef, {
-				type: `run.${terminalType}`,
-				status,
-				message,
-				data: { failureKind, signal, exitCode },
-			})
-			.catch(() => undefined);
+		// The interrupt path settles the attempt itself when it has to kill the
+		// worker; whoever commits first wins and the loser writes nothing.
+		await terminal.commitTerminalAttempt(runRef, result, message);
 	} catch (writeError) {
 		console.error(
 			writeError instanceof Error
@@ -165,20 +172,23 @@ async function maybeDelayStartForTests() {
 	if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs);
 }
 
-function requestCancel(signal) {
-	void writeTerminalResult({
-		status: "cancelled",
-		failureKind: "user_cancelled",
-		message: `durable worker received ${signal}`,
-		signal,
-	}).finally(() => {
+async function cancelAndExit(signal) {
+	try {
+		await writeTerminalResult({
+			status: "cancelled",
+			failureKind: "user_cancelled",
+			message: `durable worker received ${signal}`,
+			signal,
+		});
+	} finally {
 		process.exitCode = 130;
 		process.exit();
-	});
+	}
 }
 
-process.once("SIGINT", () => requestCancel("SIGINT"));
-process.once("SIGTERM", () => requestCancel("SIGTERM"));
+function requestCancel(signal) {
+	void cancelAndExit(signal);
+}
 
 // Cooperative cancellation poll (Windows): the worker cannot receive POSIX
 // signals, so the interrupt path drops an interrupt-request.json marker into
@@ -207,6 +217,15 @@ if (interruptRequestPath !== undefined) {
 			.catch(() => undefined);
 	}, 200);
 	interruptPoll.unref?.();
+}
+
+// Cancellation is fully wired now, so replay a signal captured during
+// bootstrap before any durable state is touched.
+cancelReady = true;
+if (pendingSignal !== null) {
+	const signal = pendingSignal;
+	pendingSignal = null;
+	await cancelAndExit(signal);
 }
 
 await artifacts
