@@ -68,11 +68,26 @@ async function importSandboxRuntime(): Promise<SandboxRuntimeModule> {
 }
 
 function defaultConfig(sandbox: SandboxInput, cwd: string, writablePaths: readonly string[], allowPty: boolean): SandboxRuntimeConfig {
+  // Bound inputs before Zod walks them. The runtime uses Zod's v3 compatibility
+  // API, whose array parser still accumulates an issue for every invalid item.
+  const allowedDomains = sandboxAllowedDomains(sandbox);
+  let remainingChars = 1024 * 1024;
+  for (const entries of [allowedDomains, writablePaths, [cwd]]) {
+    if (!Array.isArray(entries) || entries.length > 1024) {
+      throw new SandboxUnavailableError("sandbox configuration exceeds 1024 entries per list");
+    }
+    for (const entry of entries) {
+      if (typeof entry !== "string" || entry.length > 4096 || entry.length > remainingChars) {
+        throw new SandboxUnavailableError("sandbox configuration contains invalid or oversized strings");
+      }
+      remainingChars -= entry.length;
+    }
+  }
   const allowWrite = Array.from(new Set([cwd, ...writablePaths]));
   return {
     // Empty allowedDomains means deny-all network in @anthropic-ai/sandbox-runtime.
     // Callers opt into egress per run via sandbox.allowedDomains.
-    network: { allowedDomains: sandboxAllowedDomains(sandbox), deniedDomains: [] },
+    network: { allowedDomains, deniedDomains: [] },
     filesystem: { denyRead: [], allowWrite, denyWrite: [] },
     ignoreViolations: {},
     allowPty,
