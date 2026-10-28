@@ -83,17 +83,22 @@
     "validate": "npm run check:scripts && npm run check:static",
     "release:check": "node ./scripts/release-check.mjs",
     "check": "npm run check:static",
+    "check:sandbox-runtime": "node ./test/checks/sandbox-runtime.mjs",
     "check:types": "tsc -p tsconfig.json",
-    "check:static": "npm run check:types && npm run check:api && npm run check:resolver && npm run check:artifacts && npm run check:parent-session && npm run check:panel-session-scope && npm run check:contracts && npm run check:agents && npm run check:no-chain && npm run check:panel && npm run check:worktree-cleanup && npm run check:workspace-policy && npm run check:lifecycle && npm run check:fail-fast && npm run check:schema-sync && npm run check:run-lock && npm run check:atomic-write && npm run check:pi-sdk-resolution && npm run check:host-model && npm run check:reconcile && npm run check:headless-streaming && npm run check:usage-accumulation && npm run check:tool-result-budget && npm run check:live-progress && npm run check:output-preview && npm run check:package-identity && npm run check:docs && npm run check:watch && npm run check:modularization && npm run check:session-finish-marker",
+    "check:static": "npm run check:types && npm run check:sandbox-runtime && npm run check:api && npm run check:resolver && npm run check:artifacts && npm run check:parent-session && npm run check:panel-session-scope && npm run check:contracts && npm run check:agents && npm run check:no-chain && npm run check:panel && npm run check:worktree-cleanup && npm run check:workspace-policy && npm run check:lifecycle && npm run check:fail-fast && npm run check:schema-sync && npm run check:run-lock && npm run check:atomic-write && npm run check:pi-sdk-resolution && npm run check:host-model && npm run check:reconcile && npm run check:headless-streaming && npm run check:usage-accumulation && npm run check:tool-result-budget && npm run check:live-progress && npm run check:output-preview && npm run check:package-identity && npm run check:docs && npm run check:watch && npm run check:modularization && npm run check:session-finish-marker",
     "check:integration": "npm run check:model:inline && npm run check:model:headless && npm run check:model:tmux",
     "check:session-finish-marker": "node ./test/checks/session-finish-marker.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.54",
+    "@anthropic-ai/sandbox-runtime": "^0.0.81",
     "jiti": "^2.7.0"
   },
   "overrides": {
-    "node-forge": "git+https://github.com/digitalbazaar/forge.git#ceba34402e329f0365134f23fe19898756527d65"
+    "node-forge": "git+https://github.com/digitalbazaar/forge.git#ceba34402e329f0365134f23fe19898756527d65",
+    "@anthropic-ai/sandbox-runtime": {
+      "zod": "^4.6.7"
+    },
+    "undici": "^8.12.3"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^1.0.0",
